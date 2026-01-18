@@ -42,8 +42,8 @@ fi
 echo "========================================="
 
 # Set up cron job
-# Detect current user and set up crontab accordingly
-CURRENT_USER=$(whoami)
+# Detect current user - use UID if username is unknown
+CURRENT_USER=$(whoami 2>/dev/null || echo "$(id -u)")
 CRON_USER="${CURRENT_USER:-root}"
 
 # Create crontab directory if it doesn't exist
