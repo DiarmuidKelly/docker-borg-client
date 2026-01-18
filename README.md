@@ -63,6 +63,7 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    PRUNE_KEEP_DAILY=7
    PRUNE_KEEP_WEEKLY=4
    PRUNE_KEEP_MONTHLY=6
+   AUTO_INIT=true
    ```
 
    > **Note**: Set timezone using TrueNAS's built-in **Timezone** dropdown (under Advanced Settings), not as an environment variable.
@@ -95,11 +96,20 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
 
    **Restart Policy**: `Unless Stopped`
 
-4. **Initialize Repository** (one-time):
+3. **Initialize Repository**:
+
+   **Option A - Automatic (Recommended)**:
+   - Add `AUTO_INIT=true` to environment variables
+   - Start the app - repository will be automatically initialized on first run
+   - Check logs to see initialization message and **backup the credentials**
+   - Navigate to **Apps** → **Installed** → **borg-backup** → **Shell**
+   - Run: `cat /borg/config/repo-key.txt` and save to password manager
+
+   **Option B - Manual**:
    - After deployment, access the container shell via TrueNAS web UI
    - Navigate to **Apps** → **Installed** → **borg-backup** → **Shell**
    - Run: `/scripts/init.sh`
-   - Save the passphrase and export the repository key
+   - **Backup your passphrase and the repository key** to password manager
 
 4. **Monitor Backups**:
    - View logs: **Apps** → **Installed** → **borg-backup** → **Logs**
@@ -168,6 +178,7 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `BORG_RSH` | No | `ssh -i /ssh/key -o StrictHostKeyChecking=accept-new` | SSH command |
 | `CRON_SCHEDULE` | No | `0 2 * * 0` | Cron expression (default: Sunday 2am) |
 | `RUN_ON_START` | No | `false` | Run backup immediately on container start |
+| `AUTO_INIT` | No | `false` | Automatically initialize repository if it doesn't exist |
 | `PRUNE_KEEP_DAILY` | No | `7` | Daily archives to keep |
 | `PRUNE_KEEP_WEEKLY` | No | `4` | Weekly archives to keep |
 | `PRUNE_KEEP_MONTHLY` | No | `6` | Monthly archives to keep |
@@ -456,6 +467,95 @@ docker compose run --rm borg-backup /scripts/restore.sh check
 - Deleting `/borg/cache` or `/borg/config` - Can corrupt repository metadata
 
 **Recommendation**: Test your restore process regularly to ensure backups are working correctly.
+
+## Disaster Recovery
+
+Understanding how Borg encryption works is critical for disaster recovery planning.
+
+### How Borg Encryption Works
+
+Borg uses a two-layer encryption system:
+
+1. **Repository Key**: The actual encryption key that encrypts your data
+   - Automatically generated during `borg init`
+   - In "repokey" mode (default), stored **inside the repository** on the remote server
+   - Encrypted with your passphrase
+
+2. **Passphrase**: The password you set via `BORG_PASSPHRASE`
+   - Used to decrypt the repository key
+   - Never stored in the repository (you must save it separately)
+
+### What You Need for Recovery
+
+**To restore backups from a new machine, you need:**
+
+| Component | Where it's stored | Critical? |
+|-----------|-------------------|-----------|
+| Repository access | Remote backup server | ✅ Yes |
+| Passphrase | You must save this externally | ✅ Yes |
+| Repository key | Inside repo (automatic) | Usually not needed* |
+
+\* The repository key is automatically retrieved from the remote repository when you access it with your passphrase.
+
+**Example recovery scenario** (if your backup client/server fails):
+
+```bash
+# On a new machine with Borg installed
+borg list ssh://user@backup-server.com:22/path/to/repo
+# Enter your passphrase
+# Borg downloads the key from repository, decrypts it, shows your backups
+```
+
+### When You Need the Exported Key
+
+The exported repository key is **backup insurance** against rare scenarios:
+
+1. **Repository metadata corruption** on the remote server
+2. **Faster recovery**: Skip downloading key from repository
+
+The exported key will be stored at `/borg/config/repo-key.txt` (persisted to your host storage).
+
+### Critical Action Items
+
+**⚠️ REQUIRED - Do this during initial setup:**
+
+1. **Save your passphrase** securely (choose one or more):
+   - Password manager (1Password, Bitwarden, KeePass, etc.)
+   - Printed paper in a safe
+   - Encrypted USB drive in secure location
+   - **Without the passphrase, your backups are permanently unrecoverable**
+
+2. **Backup the repository key** (automatically exported to `/borg/config/repo-key.txt`):
+   ```bash
+   # From container shell - view the auto-exported key
+   cat /borg/config/repo-key.txt
+
+   # Copy this to your password manager for safekeeping
+   ```
+
+3. **Test your recovery** from a different machine to verify your passphrase works
+
+### Recovery Scenarios
+
+| Scenario | What you need | How to recover |
+|----------|---------------|----------------|
+| **Restore single file** | Repository + passphrase | Use `/scripts/restore.sh extract` |
+| **Client system failed** | Repository + passphrase | Install Borg on new machine, access repo with passphrase |
+| **Repository corrupted** | Repository + passphrase + **exported key** | `borg key import`, then access repository |
+| **Lost passphrase** | ❌ **Backups are permanently lost** | No recovery possible |
+
+### Best Practices
+
+1. ✅ Store passphrase separately from the system being backed up
+2. ✅ Export repository key and store securely (separate location)
+3. ✅ Test restore process at least once
+4. ✅ Keep SSH private key backed up separately
+5. ✅ Document your repository URL
+
+**Apply 3-2-1 rule to your encryption credentials:**
+- **3** copies (container env var, password manager, printed/offline copy)
+- **2** different media types (digital + physical)
+- **1** off-site (password manager cloud sync, safe deposit box, etc.)
 
 ## Development
 

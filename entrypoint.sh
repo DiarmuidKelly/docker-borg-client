@@ -20,6 +20,7 @@ fi
 # Set defaults
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
 RUN_ON_START="${RUN_ON_START:-false}"
+AUTO_INIT="${AUTO_INIT:-false}"
 BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new}"
 
 export BORG_RSH
@@ -40,6 +41,32 @@ if [ -n "$BACKUP_WINDOW_START" ] && [ -n "$BACKUP_WINDOW_END" ]; then
 fi
 
 echo "========================================="
+
+# Auto-initialize repository if enabled and not exists
+if [ "$AUTO_INIT" = "true" ]; then
+    echo "Checking if repository exists..."
+
+    # Try to list repository (will fail if not initialized)
+    if ! borg list "$BORG_REPO" > /dev/null 2>&1; then
+        echo ""
+        echo "Repository not found - initializing automatically..."
+        echo ""
+        /scripts/init.sh
+        echo ""
+        echo "Repository initialized! Continuing with startup..."
+        echo ""
+    else
+        echo "Repository already exists"
+
+        # Check if key is exported, if not export it
+        if [ ! -f /borg/config/repo-key.txt ]; then
+            echo "Exporting repository key to /borg/config/repo-key.txt..."
+            borg key export "$BORG_REPO" /borg/config/repo-key.txt
+            echo "⚠️  Remember to backup /borg/config/repo-key.txt to password manager!"
+        fi
+    fi
+    echo "========================================="
+fi
 
 # Set up cron job
 echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
