@@ -23,23 +23,11 @@ A minimal, generic Docker container for running [BorgBackup](https://www.borgbac
 
 TrueNAS SCALE users can deploy this container using the **Custom App** feature:
 
-1. **Create Borg User and Group** (recommended for security):
-   - SSH into your TrueNAS SCALE system or use the Shell in the web UI
-   - Create a dedicated user and group for Borg backups:
-     ```bash
-     # Create borg group (GID 568 - standard for TrueNAS custom apps)
-     groupadd -g 568 borg
-
-     # Create borg user (UID 568)
-     useradd -u 568 -g 568 -d /nonexistent -s /usr/sbin/nologin borg
-     ```
-
-2. **Prepare SSH Keys**:
-   - Create a directory for your SSH keys with proper ownership:
+1. **Prepare SSH Keys**:
+   - Create a directory for your SSH keys:
      ```bash
      mkdir -p /mnt/pool/borg-backup/ssh
      ssh-keygen -t ed25519 -f /mnt/pool/borg-backup/ssh/key -N ""
-     chown -R 568:568 /mnt/pool/borg-backup/ssh
      chmod 700 /mnt/pool/borg-backup/ssh
      chmod 600 /mnt/pool/borg-backup/ssh/key
      ```
@@ -48,7 +36,7 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
      cat /mnt/pool/borg-backup/ssh/key.pub
      ```
 
-3. **Deploy Custom App**:
+2. **Deploy Custom App**:
    - Navigate to **Apps** → **Discover Apps** → **Custom App**
    - Click **Install** on Custom App
    - Configure the following:
@@ -61,10 +49,10 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    - Image Pull Policy: `Always`
 
    **Container User and Group** (under Advanced Settings):
-   - User ID: `568`
-   - Group ID: `568`
+   - User ID: `0`
+   - Group ID: `0`
 
-   > **Note**: The container fully supports running as a non-root user. Using UID/GID 568 (or any non-root user) is recommended for security. The container will automatically configure cron for the specified user.
+   > **Note**: This container runs as root (UID/GID 0:0) to ensure reliable access to all backup paths. Backup containers require broad filesystem access by design. Privileged mode is not required.
 
    **Environment Variables** (Required - add all of these):
    ```
@@ -123,19 +111,6 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
 - **Do NOT add `TZ` as a manual environment variable** in TrueNAS Custom Apps
 - TrueNAS automatically manages timezone - look for a **Timezone** dropdown in the app configuration
 - Adding `TZ` manually will cause deployment errors: `Environment variable [TZ] is already defined`
-
-**Directory Permissions:**
-
-If the container user cannot read your backup directories (common with root-owned directories):
-
-```bash
-# Add borg user to root group to access root-owned directories
-usermod -aG root borg
-
-# Verify it worked
-id borg
-# Should show: uid=568(borg) gid=568(borg) groups=568(borg),0(root)
-```
 
 **SSH Key Permissions:**
 - Private key must be `600` (read/write for owner only)
@@ -469,7 +444,6 @@ docker compose run --rm borg-backup /scripts/restore.sh check
 4. **Restrict SSH key**: Use `~/.ssh/authorized_keys` restrictions on the backup server
 5. **Use read-only mounts**: Mount source directories as read-only (`:ro`)
 6. **Regular integrity checks**: Run `borg check` periodically
-7. **Run as non-root user**: Use UID/GID 568 (or another non-root user) to limit container privileges
 
 ### Data Safety
 
