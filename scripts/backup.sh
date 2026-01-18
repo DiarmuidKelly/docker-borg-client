@@ -21,35 +21,24 @@ check_backup_window() {
         return 0
     fi
 
-    # Convert HH:MM to minutes since midnight for comparison
-    current_hour=$(date +%H | sed 's/^0\+//')
-    current_hour=${current_hour:-0}
-    current_min=$(date +%M | sed 's/^0\+//')
-    current_min=${current_min:-0}
-    current_minutes=$((current_hour * 60 + current_min))
-
-    start_hour=$(echo "$BACKUP_WINDOW_START" | cut -d: -f1 | sed 's/^0\+//')
-    start_hour=${start_hour:-0}
-    start_min=$(echo "$BACKUP_WINDOW_START" | cut -d: -f2 | sed 's/^0\+//')
-    start_min=${start_min:-0}
-    start_minutes=$((start_hour * 60 + start_min))
-
-    end_hour=$(echo "$BACKUP_WINDOW_END" | cut -d: -f1 | sed 's/^0\+//')
-    end_hour=${end_hour:-0}
-    end_min=$(echo "$BACKUP_WINDOW_END" | cut -d: -f2 | sed 's/^0\+//')
-    end_min=${end_min:-0}
-    end_minutes=$((end_hour * 60 + end_min))
+    # Convert HH:MM to HHMM for integer comparison (e.g., "01:00" -> 100, "22:00" -> 2200)
+    current=$(date +%H%M | sed 's/^0*//')
+    current=${current:-0}
+    start=$(echo "$BACKUP_WINDOW_START" | tr -d : | sed 's/^0*//')
+    start=${start:-0}
+    end=$(echo "$BACKUP_WINDOW_END" | tr -d : | sed 's/^0*//')
+    end=${end:-0}
 
     # Normal window (e.g., 01:00-07:00)
-    if [ "$start_minutes" -lt "$end_minutes" ]; then
-        if [ "$current_minutes" -ge "$start_minutes" ] && [ "$current_minutes" -lt "$end_minutes" ]; then
+    if [ "$start" -lt "$end" ]; then
+        if [ "$current" -ge "$start" ] && [ "$current" -lt "$end" ]; then
             return 0  # Inside window
         else
             return 1  # Outside window
         fi
     else
         # Overnight window (e.g., 22:00-06:00)
-        if [ "$current_minutes" -ge "$start_minutes" ] || [ "$current_minutes" -lt "$end_minutes" ]; then
+        if [ "$current" -ge "$start" ] || [ "$current" -lt "$end" ]; then
             return 0  # Inside window
         else
             return 1  # Outside window

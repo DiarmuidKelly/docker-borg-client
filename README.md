@@ -64,7 +64,7 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    - User ID: `568`
    - Group ID: `568`
 
-   **Environment Variables** (Add all of these):
+   **Environment Variables** (Required - add all of these):
    ```
    BORG_REPO=ssh://user@your-backup-server.com:22/~/backups
    BORG_PASSPHRASE=your-strong-passphrase-here
@@ -75,6 +75,15 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    PRUNE_KEEP_MONTHLY=6
    TZ=Europe/London
    ```
+
+   **Optional - Time Window Configuration** (for large initial backups):
+   ```
+   BACKUP_WINDOW_START=01:00
+   BACKUP_WINDOW_END=07:00
+   BACKUP_RATE_LIMIT_IN_WINDOW=-1
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0
+   ```
+   This configuration runs backups only during 1am-7am at full speed, perfect for large initial backups on limited connections.
 
    **Storage**:
    - Add **Host Path Volume** for SSH keys:
