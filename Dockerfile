@@ -1,9 +1,10 @@
 FROM alpine:3
 
-# Install Borg and SSH client
+# Install Borg, SSH client, and curl for notifications
 RUN apk add --no-cache \
     borgbackup \
     openssh-client \
+    curl \
     tzdata
 
 # Create necessary directories
