@@ -19,6 +19,7 @@ PATHS=$(echo "$BACKUP_PATHS" | tr ':' ' ')
 
 # Run backup with error handling
 echo "Creating backup archive..."
+# shellcheck disable=SC2086
 if borg create \
     --stats \
     --progress \
@@ -28,9 +29,6 @@ if borg create \
 
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-
-    # Get backup statistics
-    STATS=$(borg info --last 1 "${BORG_REPO}" 2>/dev/null || echo "Stats unavailable")
 
     echo ""
     echo "✅ Backup completed successfully!"
