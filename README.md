@@ -56,7 +56,7 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    **Application Name**: `borg-backup`
 
    **Image Configuration**:
-   - Image Repository: `ghcr.io/diarmuidkelly/docker-borg-client`
+   - Image Repository: `diarmuidk/docker-borg-client`
    - Image Tag: `latest`
    - Image Pull Policy: `Always`
 
@@ -309,7 +309,7 @@ docker compose run --rm borg-backup /scripts/prune.sh
 ```yaml
 services:
   borg-backup:
-    image: ghcr.io/diarmuidkelly/docker-borg-client:latest
+    image: diarmuidk/docker-borg-client:latest
     container_name: borg-backup
     environment:
       - BORG_REPO=ssh://u123456@u123456.your-storagebox.de:23/./backups
