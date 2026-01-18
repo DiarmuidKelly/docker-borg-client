@@ -1,14 +1,13 @@
 FROM alpine:3
 
-# Install Borg, SSH client, and curl for notifications
+# Install Borg, SSH client, and curl for notifications, then create directories
+# hadolint ignore=DL3018
 RUN apk add --no-cache \
     borgbackup \
     openssh-client \
     curl \
-    tzdata
-
-# Create necessary directories
-RUN mkdir -p /data /ssh /borg/cache /borg/config /scripts
+    tzdata && \
+    mkdir -p /data /ssh /borg/cache /borg/config /scripts
 
 # Copy scripts
 COPY scripts/*.sh /scripts/
