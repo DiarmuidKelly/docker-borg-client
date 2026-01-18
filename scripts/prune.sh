@@ -16,19 +16,37 @@ echo "  - Weekly: $PRUNE_KEEP_WEEKLY"
 echo "  - Monthly: $PRUNE_KEEP_MONTHLY"
 echo ""
 
-# Prune old archives
-borg prune \
+# Prune old archives with error handling
+if borg prune \
     --stats \
     --list \
     --keep-daily="$PRUNE_KEEP_DAILY" \
     --keep-weekly="$PRUNE_KEEP_WEEKLY" \
     --keep-monthly="$PRUNE_KEEP_MONTHLY" \
-    "$BORG_REPO"
+    "$BORG_REPO" ; then
 
-echo ""
-echo "Running compact to free repository space..."
-borg compact "$BORG_REPO"
+    echo ""
+    echo "Running compact to free repository space..."
+    borg compact "$BORG_REPO"
 
-echo ""
-echo "✅ Prune completed successfully!"
-echo "========================================="
+    echo ""
+    echo "✅ Prune completed successfully!"
+    echo "========================================="
+
+    # Send success notification
+    /scripts/notify.sh "prune.success" "INFO" \
+        "Borg Prune Successful" \
+        "Retention: ${PRUNE_KEEP_DAILY}d/${PRUNE_KEEP_WEEKLY}w/${PRUNE_KEEP_MONTHLY}m"
+else
+    EXIT_CODE=$?
+    echo ""
+    echo "✗ Prune failed!"
+    echo "========================================="
+
+    # Send failure notification
+    /scripts/notify.sh "prune.failure" "CRITICAL" \
+        "Borg Prune Failed" \
+        "Exit code: ${EXIT_CODE}"
+
+    exit $EXIT_CODE
+fi

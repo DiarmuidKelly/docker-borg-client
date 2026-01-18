@@ -1,13 +1,16 @@
-name: PR Validation
+name: PR Title Validation
 
 on:
   pull_request:
-    branches:
-      - main
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
 
 jobs:
-  validate:
-    name: Validate PR
+  validate-pr-title:
+    name: Validate PR Title Format
     runs-on: ubuntu-latest
 
     steps:
@@ -57,22 +60,110 @@ jobs:
           echo "✅ VERSION file valid: $VERSION"
 
       - name: Check PR title format
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          echo "PR Title: $PR_TITLE"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
 
-          # Check if title follows conventional commits or has version bump indicator
-          if [[ "$PR_TITLE" =~ ^(feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\(.*\))?:\ .+ ]] || \
-             [[ "$PR_TITLE" =~ ^\[(MAJOR|MINOR|PATCH|SKIP|major|minor|patch|skip)\] ]] ; then
-            echo "✅ PR title follows conventional commits or has version bump indicator"
-          else
-            echo "⚠️  PR title doesn't follow conventional commits format"
-            echo "   Recommended formats:"
-            echo "   - feat: add new feature"
-            echo "   - fix: fix bug"
-            echo "   - [MAJOR] breaking change"
-            echo "   - [MINOR] new feature"
-            echo "   - [PATCH] bug fix"
-            echo "   - [SKIP] docs update"
-          fi
+            // Valid patterns:
+            // [MAJOR] description
+            // [MINOR] description
+            // [PATCH] description
+            // [SKIP] description (for docs/chore only)
+            // feat: description (auto-detected as MINOR)
+            // fix: description (auto-detected as PATCH)
+            // docs: description (auto-detected as SKIP)
+            // chore: description (auto-detected as SKIP)
+
+            const patterns = [
+              { regex: /^\[MAJOR\]\s+.+/, type: 'MAJOR', emoji: '🚨' },
+              { regex: /^\[MINOR\]\s+.+/, type: 'MINOR', emoji: '✨' },
+              { regex: /^\[PATCH\]\s+.+/, type: 'PATCH', emoji: '🐛' },
+              { regex: /^\[SKIP\]\s+.+/, type: 'SKIP', emoji: '⏭️' },
+              { regex: /^feat(\(.+\))?:\s+.+/, type: 'MINOR (auto)', emoji: '✨' },
+              { regex: /^fix(\(.+\))?:\s+.+/, type: 'PATCH (auto)', emoji: '🐛' },
+              { regex: /^docs(\(.+\))?:\s+.+/, type: 'SKIP (auto)', emoji: '📚' },
+              { regex: /^chore(\(.+\))?:\s+.+/, type: 'SKIP (auto)', emoji: '🔧' },
+              { regex: /^style(\(.+\))?:\s+.+/, type: 'SKIP (auto)', emoji: '💄' },
+              { regex: /^refactor(\(.+\))?:\s+.+/, type: 'PATCH (auto)', emoji: '♻️' },
+              { regex: /^perf(\(.+\))?:\s+.+/, type: 'PATCH (auto)', emoji: '⚡' },
+              { regex: /^test(\(.+\))?:\s+.+/, type: 'SKIP (auto)', emoji: '✅' },
+            ];
+
+            let matched = false;
+            let matchedPattern = null;
+
+            for (const pattern of patterns) {
+              if (pattern.regex.test(title)) {
+                matched = true;
+                matchedPattern = pattern;
+                break;
+              }
+            }
+
+            if (matched) {
+              // Valid format
+              const message = `${matchedPattern.emoji} **PR Title Valid**\n\n` +
+                `Title: \`${title}\`\n` +
+                `Version bump: **${matchedPattern.type}**\n\n` +
+                `When this PR is merged, it will trigger a **${matchedPattern.type}** release.`;
+
+              core.info(message);
+
+              // Post comment with validation result
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+
+              const botComment = comments.data.find(comment =>
+                comment.user.type === 'Bot' &&
+                comment.body.includes('PR Title Valid')
+              );
+
+              if (botComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: message
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: message
+                });
+              }
+            } else {
+              // Invalid format
+              const errorMessage = `❌ **PR Title Invalid**\n\n` +
+                `Current title: \`${title}\`\n\n` +
+                `**Required format:**\n` +
+                `- \`[MAJOR] description\` - Breaking changes (0.1.0 → 1.0.0)\n` +
+                `- \`[MINOR] description\` - New features (0.1.0 → 0.2.0)\n` +
+                `- \`[PATCH] description\` - Bug fixes (0.1.0 → 0.1.1)\n` +
+                `- \`[SKIP] description\` - No release (docs/chore only)\n\n` +
+                `**Or use conventional commits:**\n` +
+                `- \`feat: description\` - Auto-detected as MINOR\n` +
+                `- \`fix: description\` - Auto-detected as PATCH\n` +
+                `- \`docs: description\` - Auto-detected as SKIP\n` +
+                `- \`chore: description\` - Auto-detected as SKIP\n\n` +
+                `**Examples:**\n` +
+                `- ✅ \`[MAJOR] Update to Borg 2.0\`\n` +
+                `- ✅ \`[PATCH] Fix notification error handling\`\n` +
+                `- ✅ \`feat: add TrueNAS notification support\`\n` +
+                `- ✅ \`fix: correct backup timing\`\n` +
+                `- ✅ \`[SKIP] Update documentation\``;
+
+              core.setFailed(errorMessage);
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: errorMessage
+              });
+            }

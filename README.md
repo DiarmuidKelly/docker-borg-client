@@ -152,6 +152,20 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
 | `PRUNE_KEEP_MONTHLY` | No | `6` | Monthly archives to keep |
 | `TZ` | No | `UTC` | Timezone for cron jobs |
 
+#### Notification Variables (Optional)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NOTIFY_TRUENAS_ENABLED` | No | `false` | Enable TrueNAS API notifications |
+| `NOTIFY_TRUENAS_API_URL` | No | - | TrueNAS API URL (e.g., `http://192.168.1.100/api/v2.0`) |
+| `NOTIFY_TRUENAS_API_KEY` | No | - | TrueNAS API key (generate in Settings → API Keys) |
+| `NOTIFY_TRUENAS_VERIFY_SSL` | No | `true` | Verify SSL certificates (set to `false` for self-signed) |
+| `NOTIFY_EVENTS` | No | `backup.failure,prune.failure` | Comma-separated list of events to notify |
+
+**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`
+
+See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed instructions.
+
 ### Volume Mounts
 
 | Container Path | Purpose | Mode |
@@ -257,11 +271,12 @@ volumes:
   borg-config:
 ```
 
-## Provider-Specific Guides
+## Additional Guides
 
-- **Hetzner Storage Box**: See [docs/setup-hetzner.md](docs/setup-hetzner.md) (coming soon)
-- **rsync.net**: See [docs/setup-rsync-net.md](docs/setup-rsync-net.md) (coming soon)
-- **Self-hosted**: See [docs/setup-self-hosted.md](docs/setup-self-hosted.md) (coming soon)
+- **TrueNAS API Key Setup**: [docs/truenas-api-key-setup.md](docs/truenas-api-key-setup.md) - Generate API keys for notifications
+- **Hetzner Storage Box**: [docs/setup-hetzner.md](docs/setup-hetzner.md) (coming soon)
+- **rsync.net**: [docs/setup-rsync-net.md](docs/setup-rsync-net.md) (coming soon)
+- **Self-hosted**: [docs/setup-self-hosted.md](docs/setup-self-hosted.md) (coming soon)
 
 ## Cron Schedule Examples
 
@@ -274,6 +289,43 @@ The `CRON_SCHEDULE` variable uses standard cron format: `minute hour day-of-mont
 | `0 2 * * 1-5` | Weekdays at 2am |
 | `0 */6 * * *` | Every 6 hours |
 | `30 1 1 * *` | First day of every month at 1:30am |
+
+## Notifications
+
+Docker Borg Client supports sending notifications to TrueNAS SCALE via the TrueNAS API. This allows you to receive alerts through your existing TrueNAS notification channels (email, Slack, etc.).
+
+### Quick Setup (TrueNAS SCALE)
+
+1. **Generate API Key** in TrueNAS:
+   - Navigate to **Settings** → **API Keys**
+   - Click **Add** and create a new key
+   - Copy the generated key (shown only once!)
+
+2. **Configure Notifications**:
+   ```bash
+   NOTIFY_TRUENAS_ENABLED=true
+   NOTIFY_TRUENAS_API_URL=http://192.168.1.100/api/v2.0  # Your TrueNAS IP
+   NOTIFY_TRUENAS_API_KEY=1-abc123yourkey
+   NOTIFY_TRUENAS_VERIFY_SSL=false  # For self-signed certificates
+   NOTIFY_EVENTS=backup.failure,backup.success
+   ```
+
+3. **Test Notification**:
+   ```bash
+   # From container shell
+   /scripts/notify.sh "backup.success" "INFO" "Test" "This is a test notification"
+   ```
+
+For detailed setup instructions, see [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md).
+
+### Event Types
+
+- `backup.success` - Backup completed successfully
+- `backup.failure` - Backup failed
+- `prune.success` - Prune completed successfully
+- `prune.failure` - Prune failed
+
+**Default**: Only failures are notified (`backup.failure,prune.failure`)
 
 ## Monitoring
 
