@@ -64,7 +64,7 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    - User ID: `568`
    - Group ID: `568`
 
-   **Environment Variables** (Add all of these):
+   **Environment Variables** (Required - add all of these):
    ```
    BORG_REPO=ssh://user@your-backup-server.com:22/~/backups
    BORG_PASSPHRASE=your-strong-passphrase-here
@@ -75,6 +75,15 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    PRUNE_KEEP_MONTHLY=6
    TZ=Europe/London
    ```
+
+   **Optional - Time Window Configuration** (for large initial backups):
+   ```
+   BACKUP_WINDOW_START=01:00
+   BACKUP_WINDOW_END=07:00
+   BACKUP_RATE_LIMIT_IN_WINDOW=-1
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0
+   ```
+   This configuration runs backups only during 1am-7am at full speed, perfect for large initial backups on limited connections.
 
    **Storage**:
    - Add **Host Path Volume** for SSH keys:
@@ -165,6 +174,56 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
 **Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`
 
 See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed instructions.
+
+#### Backup Time Window and Rate Limiting (Optional)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BACKUP_WINDOW_START` | No | - | Start of backup window in HH:MM format (e.g., `01:00`) |
+| `BACKUP_WINDOW_END` | No | - | End of backup window in HH:MM format (e.g., `07:00`) |
+| `BACKUP_RATE_LIMIT_IN_WINDOW` | No | `-1` | Rate limit during window in Mbps (`-1` = unlimited) |
+| `BACKUP_RATE_LIMIT_OUT_WINDOW` | No | `-1` | Rate limit outside window in Mbps (`0` = stopped, `-1` = unlimited) |
+
+**Rate Limit Values:**
+- `-1` = Unlimited bandwidth (burst speeds)
+- `0` = Stopped (no backup, only valid for `BACKUP_RATE_LIMIT_OUT_WINDOW`)
+- Positive number = Bandwidth limit in Mbps (e.g., `40` = 40 Mbps)
+
+**Use Cases:**
+
+1. **Large initial backup on limited connection** (e.g., 1.5TB on 40 Mbps):
+   ```bash
+   BACKUP_WINDOW_START=01:00
+   BACKUP_WINDOW_END=07:00
+   BACKUP_RATE_LIMIT_IN_WINDOW=-1    # Unlimited overnight
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Stopped during day
+   ```
+   - Backup runs at full speed during 1am-7am window
+   - Automatically stops at 7am via Borg checkpoint
+   - Resumes next night from checkpoint (~5 min retransmit)
+   - Completes 1.5TB in 3-4 nights
+
+2. **Continuous backup with daytime throttle**:
+   ```bash
+   BACKUP_WINDOW_START=22:00
+   BACKUP_WINDOW_END=08:00
+   BACKUP_RATE_LIMIT_IN_WINDOW=-1    # Unlimited overnight
+   BACKUP_RATE_LIMIT_OUT_WINDOW=5    # 5 Mbps trickle during day
+   ```
+
+3. **Daytime backup with bandwidth limit**:
+   ```bash
+   BACKUP_WINDOW_START=09:00
+   BACKUP_WINDOW_END=17:00
+   BACKUP_RATE_LIMIT_IN_WINDOW=20    # 20 Mbps during business hours
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Stopped outside business hours
+   ```
+
+**How It Works:**
+- Borg automatically creates checkpoints every 5 minutes during backup
+- When backup stops (window closes), only ~5 minutes of data needs retransmitting
+- Next backup run resumes automatically from last checkpoint
+- No manual intervention required
 
 ### Volume Mounts
 
