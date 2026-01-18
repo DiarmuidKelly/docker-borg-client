@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=ash
 # Notification dispatcher for Borg Backup events
 
 EVENT_TYPE="${1:-}"      # e.g., backup.success, backup.failure
@@ -74,8 +75,10 @@ EOF
         -H "Content-Type: application/json" \
         -d "$json_payload" 2>&1)
 
-    local http_code=$(echo "$response" | tail -n1)
-    local body=$(echo "$response" | sed '$d')
+    local http_code
+    local body
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
 
     if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
         echo "✓ TrueNAS notification sent: $EVENT_TITLE"
