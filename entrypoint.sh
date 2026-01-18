@@ -42,7 +42,20 @@ fi
 echo "========================================="
 
 # Set up cron job
-echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
+# Detect current user and set up crontab accordingly
+CURRENT_USER=$(whoami)
+CRON_USER="${CURRENT_USER:-root}"
+
+# Create crontab directory if it doesn't exist
+mkdir -p /etc/crontabs
+
+# Write crontab for current user
+echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > "/etc/crontabs/${CRON_USER}"
+
+# Ensure proper permissions on crontab file
+chmod 600 "/etc/crontabs/${CRON_USER}"
+
+echo "Cron job configured for user: ${CRON_USER}"
 
 # Run backup on start if requested
 if [ "$RUN_ON_START" = "true" ]; then

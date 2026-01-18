@@ -64,6 +64,8 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    - User ID: `568`
    - Group ID: `568`
 
+   > **Note**: The container fully supports running as a non-root user. Using UID/GID 568 (or any non-root user) is recommended for security. The container will automatically configure cron for the specified user.
+
    **Environment Variables** (Required - add all of these):
    ```
    BORG_REPO=ssh://user@your-backup-server.com:22/~/backups
@@ -73,8 +75,9 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
    PRUNE_KEEP_DAILY=7
    PRUNE_KEEP_WEEKLY=4
    PRUNE_KEEP_MONTHLY=6
-   TZ=Europe/London
    ```
+
+   > **Note**: Set timezone using TrueNAS's built-in **Timezone** dropdown (under Advanced Settings), not as an environment variable.
 
    **Optional - Time Window Configuration** (for large initial backups):
    ```
@@ -113,6 +116,40 @@ TrueNAS SCALE users can deploy this container using the **Custom App** feature:
 4. **Monitor Backups**:
    - View logs: **Apps** → **Installed** → **borg-backup** → **Logs**
    - Backups will run automatically according to your cron schedule
+
+#### TrueNAS-Specific Notes
+
+**Timezone Configuration:**
+- **Do NOT add `TZ` as a manual environment variable** in TrueNAS Custom Apps
+- TrueNAS automatically manages timezone - look for a **Timezone** dropdown in the app configuration
+- Adding `TZ` manually will cause deployment errors: `Environment variable [TZ] is already defined`
+
+**Directory Permissions:**
+
+If the container user cannot read your backup directories (common with root-owned directories):
+
+```bash
+# Add borg user to root group to access root-owned directories
+usermod -aG root borg
+
+# Verify it worked
+id borg
+# Should show: uid=568(borg) gid=568(borg) groups=568(borg),0(root)
+```
+
+**SSH Key Permissions:**
+- Private key must be `600` (read/write for owner only)
+- SSH directory must be `700` (read/write/execute for owner only)
+- If permissions are incorrect, SSH authentication will silently fail
+
+**Testing SSH Connection:**
+
+Before deploying, verify SSH key authentication works:
+```bash
+ssh -i /mnt/pool/borg-backup/ssh/key -p <port> user@backup-server.com
+```
+
+If prompted for password, SSH key is not configured correctly on remote server.
 
 ### Docker Compose Setup
 
