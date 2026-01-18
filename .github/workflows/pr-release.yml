@@ -1,0 +1,151 @@
+name: Auto Release on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-release:
+    name: Create Release from PR
+    runs-on: ubuntu-latest
+    # Only run if PR was merged (not just closed)
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Determine version bump from PR title
+        id: version_bump
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+
+          # Check for version bump indicators in PR title
+          if [[ "$PR_TITLE" =~ ^\[MAJOR\] ]] || [[ "$PR_TITLE" =~ ^\[major\] ]]; then
+            echo "bump=major" >> $GITHUB_OUTPUT
+            echo "Version bump: MAJOR (breaking changes)"
+          elif [[ "$PR_TITLE" =~ ^\[MINOR\] ]] || [[ "$PR_TITLE" =~ ^\[minor\] ]] || [[ "$PR_TITLE" =~ ^feat ]]; then
+            echo "bump=minor" >> $GITHUB_OUTPUT
+            echo "Version bump: MINOR (new feature)"
+          elif [[ "$PR_TITLE" =~ ^\[PATCH\] ]] || [[ "$PR_TITLE" =~ ^\[patch\] ]] || [[ "$PR_TITLE" =~ ^fix ]]; then
+            echo "bump=patch" >> $GITHUB_OUTPUT
+            echo "Version bump: PATCH (bug fix)"
+          else
+            # Default to patch for Dockerfile/workflow changes
+            echo "bump=patch" >> $GITHUB_OUTPUT
+            echo "Version bump: PATCH (default)"
+          fi
+
+      - name: Check if release should be skipped
+        id: skip_check
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_LABELS="${{ toJson(github.event.pull_request.labels.*.name) }}"
+
+          # Skip release for certain PR types
+          if [[ "$PR_TITLE" =~ ^\[SKIP\] ]] || \
+             [[ "$PR_TITLE" =~ ^\[skip\] ]] || \
+             [[ "$PR_TITLE" =~ ^docs: ]] || \
+             [[ "$PR_TITLE" =~ ^chore: ]] && ! [[ "$PR_TITLE" =~ deps ]] || \
+             [[ "$PR_LABELS" =~ "skip-release" ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "⏭️ Release will be skipped (docs/chore/skip label)"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "✅ Release will be created"
+          fi
+
+      - name: Configure git
+        if: steps.skip_check.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run auto-release script
+        if: steps.skip_check.outputs.skip == 'false'
+        run: |
+          chmod +x scripts/auto-release.sh
+          ./scripts/auto-release.sh ${{ steps.version_bump.outputs.bump }}
+
+      - name: Push changes and tag
+        if: steps.skip_check.outputs.skip == 'false'
+        run: |
+          git push origin main
+          git push --tags
+
+      - name: Get new version
+        if: steps.skip_check.outputs.skip == 'false'
+        id: version
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: steps.skip_check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release v${{ steps.version.outputs.VERSION }}
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Docker Images
+
+            This release is available on both registries:
+
+            **GHCR:**
+            ```bash
+            docker pull ghcr.io/diarmuidkelly/docker-borg-client:${{ steps.version.outputs.VERSION }}
+            docker pull ghcr.io/diarmuidkelly/docker-borg-client:latest
+            ```
+
+            **DockerHub:**
+            ```bash
+            docker pull diarmuidk/docker-borg-client:${{ steps.version.outputs.VERSION }}
+            docker pull diarmuidk/docker-borg-client:latest
+            ```
+
+            ## Changes
+
+            Merged PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}
+
+            See the [full changelog](https://github.com/${{ github.repository }}/compare/v${{ steps.version.outputs.VERSION }}...main) for details.
+
+            ---
+            🤖 Auto-released via GitHub Actions
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on PR
+        if: steps.skip_check.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Release v${{ steps.version.outputs.VERSION }} created!**\n\n` +
+                    `- Version bump: **${{ steps.version_bump.outputs.bump }}**\n` +
+                    `- Release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.VERSION }}\n\n` +
+                    `Docker images will be built and pushed automatically.`
+            })
+
+      - name: Comment on skipped release
+        if: steps.skip_check.outputs.skip == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `⏭️ **Release skipped**\n\nThis PR was marked to skip release (docs/chore changes only).`
+            })

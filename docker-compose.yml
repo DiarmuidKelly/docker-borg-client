@@ -1,0 +1,28 @@
+services:
+  borg-backup:
+    build: .
+    container_name: borg-backup
+    environment:
+      - BORG_REPO=${BORG_REPO}
+      - BORG_PASSPHRASE=${BORG_PASSPHRASE}
+      - BACKUP_PATHS=${BACKUP_PATHS}
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 2 * * 0}
+      - RUN_ON_START=${RUN_ON_START:-false}
+      - PRUNE_KEEP_DAILY=${PRUNE_KEEP_DAILY:-7}
+      - PRUNE_KEEP_WEEKLY=${PRUNE_KEEP_WEEKLY:-4}
+      - PRUNE_KEEP_MONTHLY=${PRUNE_KEEP_MONTHLY:-6}
+      - TZ=${TZ:-UTC}
+    volumes:
+      # SSH key (read-only)
+      - ./ssh:/ssh:ro
+      # Data to backup (read-only) - customize these paths
+      - ${BACKUP_SOURCE_1}:/data/backup1:ro
+      # - ${BACKUP_SOURCE_2}:/data/backup2:ro
+      # Borg cache and config (persistent)
+      - borg-cache:/borg/cache
+      - borg-config:/borg/config
+    restart: unless-stopped
+
+volumes:
+  borg-cache:
+  borg-config:

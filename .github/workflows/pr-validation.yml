@@ -1,0 +1,78 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Validate PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Dockerfile
+        run: |
+          if [ ! -f Dockerfile ]; then
+            echo "❌ Dockerfile not found"
+            exit 1
+          fi
+          echo "✅ Dockerfile exists"
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+      - name: Validate shell scripts
+        run: |
+          # Check if shellcheck is available
+          if ! command -v shellcheck &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y shellcheck
+          fi
+
+          # Find and check all shell scripts
+          find . -name "*.sh" -type f | while read -r script; do
+            echo "Checking $script..."
+            shellcheck "$script" || exit 1
+          done
+
+      - name: Validate VERSION file
+        run: |
+          if [ ! -f VERSION ]; then
+            echo "❌ VERSION file not found"
+            exit 1
+          fi
+
+          VERSION=$(cat VERSION)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid VERSION format: $VERSION (expected: X.Y.Z)"
+            exit 1
+          fi
+
+          echo "✅ VERSION file valid: $VERSION"
+
+      - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR Title: $PR_TITLE"
+
+          # Check if title follows conventional commits or has version bump indicator
+          if [[ "$PR_TITLE" =~ ^(feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\(.*\))?:\ .+ ]] || \
+             [[ "$PR_TITLE" =~ ^\[(MAJOR|MINOR|PATCH|SKIP|major|minor|patch|skip)\] ]] ; then
+            echo "✅ PR title follows conventional commits or has version bump indicator"
+          else
+            echo "⚠️  PR title doesn't follow conventional commits format"
+            echo "   Recommended formats:"
+            echo "   - feat: add new feature"
+            echo "   - fix: fix bug"
+            echo "   - [MAJOR] breaking change"
+            echo "   - [MINOR] new feature"
+            echo "   - [PATCH] bug fix"
+            echo "   - [SKIP] docs update"
+          fi
