@@ -20,4 +20,7 @@ RUN chmod +x /entrypoint.sh /scripts/*.sh
 ENV BORG_CACHE_DIR=/borg/cache
 ENV BORG_CONFIG_DIR=/borg/config
 
+# Set default SSH command for Borg (can be overridden via environment variable)
+ENV BORG_RSH="ssh -i /ssh/key -o StrictHostKeyChecking=accept-new"
+
 ENTRYPOINT ["/entrypoint.sh"]
