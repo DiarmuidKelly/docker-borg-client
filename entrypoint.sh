@@ -42,8 +42,17 @@ fi
 echo "========================================="
 
 # Set up cron job
-# Detect current user - use UID if username is unknown
-CURRENT_USER=$(whoami 2>/dev/null || echo "$(id -u)")
+# Ensure current user exists in /etc/passwd for cron to work properly
+CURRENT_UID=$(id -u)
+CURRENT_GID=$(id -g)
+
+if ! getent passwd "$CURRENT_UID" > /dev/null 2>&1; then
+    echo "borg-user:x:${CURRENT_UID}:${CURRENT_GID}:Borg Backup User:/tmp:/sbin/nologin" >> /etc/passwd
+    echo "Creating passwd entry for UID ${CURRENT_UID}"
+fi
+
+# Get username (now guaranteed to exist)
+CURRENT_USER=$(whoami)
 CRON_USER="${CURRENT_USER:-root}"
 
 # Create crontab directory if it doesn't exist
