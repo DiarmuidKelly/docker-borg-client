@@ -31,6 +31,14 @@ echo "Repository: $BORG_REPO"
 echo "Backup paths: $BACKUP_PATHS"
 echo "Cron schedule: $CRON_SCHEDULE"
 echo "Run on start: $RUN_ON_START"
+
+# Display time window configuration if set
+if [ -n "$BACKUP_WINDOW_START" ] && [ -n "$BACKUP_WINDOW_END" ]; then
+    echo "Backup window: ${BACKUP_WINDOW_START}-${BACKUP_WINDOW_END}"
+    echo "Rate limit in window: ${BACKUP_RATE_LIMIT_IN_WINDOW:--1} Mbps"
+    echo "Rate limit out window: ${BACKUP_RATE_LIMIT_OUT_WINDOW:--1} Mbps"
+fi
+
 echo "========================================="
 
 # Set up cron job

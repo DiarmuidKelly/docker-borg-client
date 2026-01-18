@@ -14,6 +14,61 @@ echo "Repository: $BORG_REPO"
 echo "Paths: $BACKUP_PATHS"
 echo ""
 
+# Check if we're within backup window (if configured)
+check_backup_window() {
+    # If no window configured, always allow backup
+    if [ -z "$BACKUP_WINDOW_START" ] || [ -z "$BACKUP_WINDOW_END" ]; then
+        return 0
+    fi
+
+    CURRENT_TIME=$(date +%H:%M)
+
+    # Simple time comparison (works for same-day windows like 01:00-07:00)
+    if [ "$BACKUP_WINDOW_START" \< "$BACKUP_WINDOW_END" ]; then
+        # Normal window (e.g., 01:00-07:00)
+        if [ "$CURRENT_TIME" \>= "$BACKUP_WINDOW_START" ] && [ "$CURRENT_TIME" \< "$BACKUP_WINDOW_END" ]; then
+            return 0  # Inside window
+        else
+            return 1  # Outside window
+        fi
+    else
+        # Overnight window (e.g., 22:00-06:00)
+        if [ "$CURRENT_TIME" \>= "$BACKUP_WINDOW_START" ] || [ "$CURRENT_TIME" \< "$BACKUP_WINDOW_END" ]; then
+            return 0  # Inside window
+        else
+            return 1  # Outside window
+        fi
+    fi
+}
+
+# Determine rate limit based on window
+RATE_LIMIT_MBPS=-1  # Default: unlimited
+
+if check_backup_window; then
+    echo "✓ Inside backup window"
+    RATE_LIMIT_MBPS="${BACKUP_RATE_LIMIT_IN_WINDOW:--1}"
+else
+    echo "⚠ Outside backup window"
+    RATE_LIMIT_MBPS="${BACKUP_RATE_LIMIT_OUT_WINDOW:--1}"
+
+    # If rate limit is 0 (stopped), exit gracefully
+    if [ "$RATE_LIMIT_MBPS" = "0" ]; then
+        echo "Backup stopped outside window (BACKUP_RATE_LIMIT_OUT_WINDOW=0)"
+        echo "Next backup will run during window: ${BACKUP_WINDOW_START}-${BACKUP_WINDOW_END}"
+        exit 0
+    fi
+fi
+
+# Convert Mbps to KB/s for Borg (Mbps * 1000 / 8 / 1.024 ≈ Mbps * 122)
+BORG_RATE_LIMIT=""
+if [ "$RATE_LIMIT_MBPS" != "-1" ]; then
+    RATE_LIMIT_KBS=$((RATE_LIMIT_MBPS * 122))
+    BORG_RATE_LIMIT="--upload-ratelimit $RATE_LIMIT_KBS"
+    echo "Rate limit: ${RATE_LIMIT_MBPS} Mbps (~${RATE_LIMIT_KBS} KB/s)"
+else
+    echo "Rate limit: unlimited"
+fi
+
 # Convert colon-separated paths to space-separated for borg
 PATHS=$(echo "$BACKUP_PATHS" | tr ':' ' ')
 
@@ -24,6 +79,7 @@ if borg create \
     --stats \
     --progress \
     --compression lz4 \
+    $BORG_RATE_LIMIT \
     "${BORG_REPO}::${ARCHIVE_NAME}" \
     $PATHS ; then
 
