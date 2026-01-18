@@ -7,9 +7,7 @@ RUN apk add --no-cache \
     openssh-client \
     curl \
     tzdata && \
-    mkdir -p /data /ssh /borg/cache /borg/config /scripts && \
-    mkdir -p /etc/crontabs && \
-    chmod 1777 /etc/crontabs
+    mkdir -p /data /ssh /borg/cache /borg/config /scripts
 
 # Copy scripts
 COPY scripts/*.sh /scripts/

@@ -42,29 +42,8 @@ fi
 echo "========================================="
 
 # Set up cron job
-# Ensure current user exists in /etc/passwd for cron to work properly
-CURRENT_UID=$(id -u)
-CURRENT_GID=$(id -g)
-
-if ! getent passwd "$CURRENT_UID" > /dev/null 2>&1; then
-    echo "borg-user:x:${CURRENT_UID}:${CURRENT_GID}:Borg Backup User:/tmp:/sbin/nologin" >> /etc/passwd
-    echo "Creating passwd entry for UID ${CURRENT_UID}"
-fi
-
-# Get username (now guaranteed to exist)
-CURRENT_USER=$(whoami)
-CRON_USER="${CURRENT_USER:-root}"
-
-# Create crontab directory if it doesn't exist
-mkdir -p /etc/crontabs
-
-# Write crontab for current user
-echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > "/etc/crontabs/${CRON_USER}"
-
-# Ensure proper permissions on crontab file
-chmod 600 "/etc/crontabs/${CRON_USER}"
-
-echo "Cron job configured for user: ${CRON_USER}"
+echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
+echo "Cron job configured"
 
 # Run backup on start if requested
 if [ "$RUN_ON_START" = "true" ]; then
