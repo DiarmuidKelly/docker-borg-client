@@ -75,6 +75,7 @@ fi
 echo "Borg process started (PID: $BORG_PID)"
 
 # Spawn window monitor with verified borg PID
+MONITOR_PID=""
 if [ "${BACKUP_RATE_LIMIT_OUT_WINDOW:-}" = "0" ]; then
     /scripts/window-monitor.sh $BORG_PID &
     MONITOR_PID=$!
@@ -84,6 +85,11 @@ fi
 # Wait for borg to complete
 wait $BORG_PID
 EXIT_CODE=$?
+
+# Wait for monitor to exit (it exits automatically when borg exits)
+if [ -n "$MONITOR_PID" ]; then
+    wait "$MONITOR_PID" 2>/dev/null || true
+fi
 
 if [ $EXIT_CODE -eq 0 ]; then
     # Success - checkpoint archives will be auto-cleaned by prune

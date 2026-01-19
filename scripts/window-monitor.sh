@@ -9,18 +9,17 @@ if [ -z "$BORG_PID" ]; then
     exit 1
 fi
 
-# Hardcoded checkpoint interval and grace period
+# Hardcoded grace period (60% of Borg's 30-min default checkpoint interval)
 # Borg default checkpoint interval is 1800s (30 min)
 # Values < 1800s cause significant performance degradation (cache write storms)
 # See: https://github.com/borgbackup/borg/issues/896
 #      https://github.com/borgbackup/borg/issues/2841
-CHECKPOINT_INTERVAL=1800  # 30 min (Borg upstream recommendation)
-GRACE_PERIOD=1080         # 18 min (60% of checkpoint interval)
+GRACE_PERIOD=1080  # 18 min (60% of 1800s checkpoint interval)
 
 # Track when we exited window
 WINDOW_EXIT_TIME=""
 
-while kill -0 $BORG_PID 2>/dev/null; do
+while kill -0 "$BORG_PID" 2>/dev/null; do
     sleep $CHECK_INTERVAL
 
     # Check if we're still in window
@@ -43,7 +42,7 @@ while kill -0 $BORG_PID 2>/dev/null; do
             if [ "$OVERRUN" -ge "$GRACE_PERIOD" ]; then
                 echo "⏹️  Grace period expired, terminating backup (PID: $BORG_PID)..."
                 echo "Backup will auto-resume from checkpoint in next window"
-                kill -TERM $BORG_PID
+                kill -TERM "$BORG_PID"
                 exit 0
             fi
         fi
