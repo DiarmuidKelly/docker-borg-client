@@ -128,7 +128,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "========================================="
 
 elif [ $EXIT_CODE -eq 143 ]; then
-    # SIGTERM (killed by window monitor during grace period)
+    # SIGTERM (killed by window monitor at window end or after checkpoint)
     echo ""
     echo "ℹ️  Backup terminated by window monitor"
     echo "Will resume from checkpoint in next window"

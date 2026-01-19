@@ -256,7 +256,7 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
    BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Terminated and resumed via checkpoint
    ```
    - Backup runs at full speed during 1am-7am window
-   - Automatically terminated at 7am (with 18-min grace period for checkpoint)
+   - Automatically terminated at 7am (checkpoint polling in final 30 min)
    - Resumes next night from last checkpoint
    - Completes 1.5TB in 3-4 nights with minimal rework
 
@@ -279,9 +279,10 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
 **How It Works:**
 - Borg (1.1+) automatically creates checkpoints every 30 minutes during backup
 - When backup window ends with `BACKUP_RATE_LIMIT_OUT_WINDOW=0`:
-  - Backup enters 18-minute grace period to allow checkpoint completion
-  - Backup terminated after grace period expires
-  - Up to 18 minutes of out-of-window bandwidth usage (trade-off for minimal wasted work)
+  - Monitor polls for new checkpoints in final 30 minutes of window
+  - If new checkpoint detected → backup terminated immediately (minimizes wasted work)
+  - If window ends → backup terminated at deadline (hard stop)
+  - **Zero out-of-window bandwidth usage** (never exceeds window)
 - Next backup run automatically resumes from last checkpoint
 - Container restarts automatically break stale locks and resume from checkpoint
 - No manual intervention required
