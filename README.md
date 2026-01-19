@@ -1,5 +1,13 @@
 # Docker Borg Client
 
+[![Docker Image Version](https://img.shields.io/docker/v/diarmuidk/docker-borg-client?sort=semver&logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![Docker Image Size](https://img.shields.io/docker/image-size/diarmuidk/docker-borg-client/latest?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![Docker Pulls](https://img.shields.io/docker/pulls/diarmuidk/docker-borg-client?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![Docker Stars](https://img.shields.io/docker/stars/diarmuidk/docker-borg-client?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![CI](https://github.com/DiarmuidKelly/docker-borg-client/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/DiarmuidKelly/docker-borg-client/actions)
+[![GitHub release](https://img.shields.io/github/v/release/DiarmuidKelly/docker-borg-client?logo=github)](https://github.com/DiarmuidKelly/docker-borg-client/releases)
+[![Licence](https://img.shields.io/github/license/DiarmuidKelly/docker-borg-client)](LICENCE)
+
 A minimal, generic Docker container for running [BorgBackup](https://www.borgbackup.org/) backups to any remote SSH-accessible Borg repository. Designed for TrueNAS but works anywhere Docker runs.
 
 ## Table of Contents
