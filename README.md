@@ -2,6 +2,32 @@
 
 A minimal, generic Docker container for running [BorgBackup](https://www.borgbackup.org/) backups to any remote SSH-accessible Borg repository. Designed for TrueNAS but works anywhere Docker runs.
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [TrueNAS SCALE Setup](#truenas-scale-setup)
+  - [Docker Compose Setup](#docker-compose-setup)
+- [Configuration Reference](#configuration-reference)
+  - [Environment Variables](#environment-variables)
+  - [Notification Variables](#notification-variables-optional)
+  - [Backup Time Window and Rate Limiting](#backup-time-window-and-rate-limiting-optional)
+  - [Volume Mounts](#volume-mounts)
+- [Manual Operations](#manual-operations)
+- [Docker Compose Example](#docker-compose-example)
+- [Additional Guides](#additional-guides)
+- [Cron Schedule Examples](#cron-schedule-examples)
+- [Notifications](#notifications)
+- [Monitoring](#monitoring)
+- [Troubleshooting](#troubleshooting)
+- [Security Best Practices](#security-best-practices)
+- [Disaster Recovery](#disaster-recovery)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Licence](#licence)
+- [Acknowledgements](#acknowledgements)
+
 ## Features
 
 - 🔒 **Secure**: Client-side encryption with SSH key authentication

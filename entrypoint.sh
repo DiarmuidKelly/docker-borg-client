@@ -46,16 +46,12 @@ echo "========================================="
 if [ "$AUTO_INIT" = "true" ]; then
     echo "Checking if repository exists..."
 
-    # Try to list repository (will fail if not initialized)
-    if ! borg list "$BORG_REPO" > /dev/null 2>&1; then
-        echo ""
-        echo "Repository not found - initializing automatically..."
-        echo ""
-        /scripts/init.sh
-        echo ""
-        echo "Repository initialized! Continuing with startup..."
-        echo ""
-    else
+    # Try to list repository and capture output
+    BORG_CHECK_OUTPUT=$(borg list "$BORG_REPO" 2>&1)
+    BORG_CHECK_EXIT=$?
+
+    if [ $BORG_CHECK_EXIT -eq 0 ]; then
+        # Repository exists and is accessible
         echo "Repository already exists"
 
         # Check if key is exported, if not export it
@@ -64,6 +60,21 @@ if [ "$AUTO_INIT" = "true" ]; then
             borg key export "$BORG_REPO" /borg/config/repo-key.txt
             echo "⚠️  Remember to backup /borg/config/repo-key.txt to password manager!"
         fi
+    elif echo "$BORG_CHECK_OUTPUT" | grep -q "Lock.*by.*PID"; then
+        # Repository is locked (backup in progress or stale lock)
+        echo "⚠️  Repository is currently locked (backup may be in progress)"
+        echo "If this persists, you may need to break the lock manually:"
+        echo "  docker exec <container> borg break-lock $BORG_REPO"
+        echo "Continuing anyway - cron will handle scheduled backups..."
+    else
+        # Repository doesn't exist - initialize it
+        echo ""
+        echo "Repository not found - initializing automatically..."
+        echo ""
+        /scripts/init.sh
+        echo ""
+        echo "Repository initialized! Continuing with startup..."
+        echo ""
     fi
     echo "========================================="
 fi
