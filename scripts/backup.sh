@@ -1,8 +1,21 @@
 #!/bin/sh
 set -e
 
-TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-ARCHIVE_NAME="backup-${TIMESTAMP}"
+# Check for existing checkpoint to resume
+echo "Checking for incomplete backups..."
+CHECKPOINT_ARCHIVE=$(borg list "$BORG_REPO" --short 2>/dev/null | grep '\.checkpoint$' | head -1 | sed 's/\.checkpoint$//')
+
+if [ -n "$CHECKPOINT_ARCHIVE" ]; then
+    # Resume existing checkpoint
+    ARCHIVE_NAME="$CHECKPOINT_ARCHIVE"
+    echo "📦 Resuming incomplete backup: $ARCHIVE_NAME"
+else
+    # No checkpoint found, create new timestamped archive
+    TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+    ARCHIVE_NAME="backup-${TIMESTAMP}"
+    echo "📦 Starting new backup: $ARCHIVE_NAME"
+fi
+
 START_TIME=$(date +%s)
 
 echo "========================================="
