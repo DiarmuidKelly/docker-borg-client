@@ -16,34 +16,7 @@ echo ""
 
 # Check if we're within backup window (if configured)
 check_backup_window() {
-    # If no window configured, always allow backup
-    if [ -z "$BACKUP_WINDOW_START" ] || [ -z "$BACKUP_WINDOW_END" ]; then
-        return 0
-    fi
-
-    # Convert HH:MM to HHMM for integer comparison (e.g., "01:00" -> 100, "22:00" -> 2200)
-    current=$(date +%H%M | sed 's/^0*//')
-    current=${current:-0}
-    start=$(echo "$BACKUP_WINDOW_START" | tr -d : | sed 's/^0*//')
-    start=${start:-0}
-    end=$(echo "$BACKUP_WINDOW_END" | tr -d : | sed 's/^0*//')
-    end=${end:-0}
-
-    # Normal window (e.g., 01:00-07:00)
-    if [ "$start" -lt "$end" ]; then
-        if [ "$current" -ge "$start" ] && [ "$current" -lt "$end" ]; then
-            return 0  # Inside window
-        else
-            return 1  # Outside window
-        fi
-    else
-        # Overnight window (e.g., 22:00-06:00)
-        if [ "$current" -ge "$start" ] || [ "$current" -lt "$end" ]; then
-            return 0  # Inside window
-        else
-            return 1  # Outside window
-        fi
-    fi
+    /scripts/check-window.sh
 }
 
 # Determine rate limit based on window
@@ -79,15 +52,41 @@ PATHS=$(echo "$BACKUP_PATHS" | tr ':' ' ')
 
 # Run backup with error handling
 echo "Creating backup archive..."
+
+# Spawn borg in background to capture its PID
 # shellcheck disable=SC2086
-if borg create \
+borg create \
     --stats \
     --progress \
     --compression lz4 \
     $BORG_RATE_LIMIT \
     "${BORG_REPO}::${ARCHIVE_NAME}" \
-    $PATHS ; then
+    $PATHS &
 
+BORG_PID=$!
+
+# Verify we captured the correct PID (borg process)
+if ! ps -p $BORG_PID -o comm= 2>/dev/null | grep -q "borg"; then
+    echo "ERROR: Failed to start borg or capture PID"
+    wait $BORG_PID
+    exit $?
+fi
+
+echo "Borg process started (PID: $BORG_PID)"
+
+# Spawn window monitor with verified borg PID
+if [ "${BACKUP_RATE_LIMIT_OUT_WINDOW:-}" = "0" ]; then
+    /scripts/window-monitor.sh $BORG_PID &
+    MONITOR_PID=$!
+    echo "Window monitor started (PID: $MONITOR_PID)"
+fi
+
+# Wait for borg to complete
+wait $BORG_PID
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 0 ]; then
+    # Success - checkpoint archives will be auto-cleaned by prune
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
 
@@ -108,8 +107,17 @@ if borg create \
     echo "========================================="
     echo "Backup completed at $(date)"
     echo "========================================="
+
+elif [ $EXIT_CODE -eq 143 ]; then
+    # SIGTERM (killed by window monitor during grace period)
+    echo ""
+    echo "ℹ️  Backup terminated by window monitor"
+    echo "Will resume from checkpoint in next window"
+    echo ""
+    exit 0  # Don't treat as failure
+
 else
-    EXIT_CODE=$?
+    # Genuine failure
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
 
@@ -124,3 +132,5 @@ else
 
     exit $EXIT_CODE
 fi
+
+# Monitor exits automatically when borg exits

@@ -235,7 +235,7 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
 
 **Rate Limit Values:**
 - `-1` = Unlimited bandwidth (burst speeds)
-- `0` = Stopped (no backup, only valid for `BACKUP_RATE_LIMIT_OUT_WINDOW`)
+- `0` = Terminate backup outside window, auto-resume from checkpoint (only valid for `BACKUP_RATE_LIMIT_OUT_WINDOW`)
 - Positive number = Bandwidth limit in Mbps (e.g., `40` = 40 Mbps)
 
 **Use Cases:**
@@ -245,12 +245,12 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
    BACKUP_WINDOW_START=01:00
    BACKUP_WINDOW_END=07:00
    BACKUP_RATE_LIMIT_IN_WINDOW=-1    # Unlimited overnight
-   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Stopped during day
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Terminated and resumed via checkpoint
    ```
    - Backup runs at full speed during 1am-7am window
-   - Automatically stops at 7am via Borg checkpoint
-   - Resumes next night from checkpoint (~5 min retransmit)
-   - Completes 1.5TB in 3-4 nights
+   - Automatically terminated at 7am (with 18-min grace period for checkpoint)
+   - Resumes next night from last checkpoint
+   - Completes 1.5TB in 3-4 nights with minimal rework
 
 2. **Continuous backup with daytime throttle**:
    ```bash
@@ -265,14 +265,21 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
    BACKUP_WINDOW_START=09:00
    BACKUP_WINDOW_END=17:00
    BACKUP_RATE_LIMIT_IN_WINDOW=20    # 20 Mbps during business hours
-   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Stopped outside business hours
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Terminated outside business hours
    ```
 
 **How It Works:**
-- Borg automatically creates checkpoints every 5 minutes during backup
-- When backup stops (window closes), only ~5 minutes of data needs retransmitting
-- Next backup run resumes automatically from last checkpoint
+- Borg (1.1+) automatically creates checkpoints every 30 minutes during backup
+- When backup window ends with `BACKUP_RATE_LIMIT_OUT_WINDOW=0`:
+  - Backup enters 18-minute grace period to allow checkpoint completion
+  - Backup terminated after grace period expires
+  - Up to 18 minutes of out-of-window bandwidth usage (trade-off for minimal wasted work)
+- Next backup run automatically resumes from last checkpoint
+- Container restarts automatically break stale locks and resume from checkpoint
 - No manual intervention required
+
+**Requirements:**
+- Borg 1.1 or later (for checkpoint support within files)
 
 ### Volume Mounts
 
