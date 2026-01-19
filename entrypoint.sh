@@ -61,11 +61,10 @@ if [ "$AUTO_INIT" = "true" ]; then
             echo "⚠️  Remember to backup /borg/config/repo-key.txt to password manager!"
         fi
     elif echo "$BORG_CHECK_OUTPUT" | grep -q "Lock.*by.*PID"; then
-        # Repository is locked (backup in progress or stale lock)
-        echo "⚠️  Repository is currently locked (backup may be in progress)"
-        echo "If this persists, you may need to break the lock manually:"
-        echo "  docker exec <container> borg break-lock $BORG_REPO"
-        echo "Continuing anyway - cron will handle scheduled backups..."
+        # Repository is locked - container restart means previous backup is dead
+        echo "⚠️  Repository locked from previous session, breaking lock..."
+        borg break-lock "$BORG_REPO" 2>/dev/null || true
+        echo "Lock broken - next backup will resume from checkpoint"
     else
         # Repository doesn't exist - initialize it
         echo ""

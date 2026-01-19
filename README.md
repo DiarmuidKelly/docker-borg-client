@@ -1,5 +1,13 @@
 # Docker Borg Client
 
+[![Docker Image Version](https://img.shields.io/docker/v/diarmuidk/docker-borg-client?sort=semver&logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![Docker Image Size](https://img.shields.io/docker/image-size/diarmuidk/docker-borg-client/latest?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![Docker Pulls](https://img.shields.io/docker/pulls/diarmuidk/docker-borg-client?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![Docker Stars](https://img.shields.io/docker/stars/diarmuidk/docker-borg-client?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
+[![CI](https://github.com/DiarmuidKelly/docker-borg-client/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/DiarmuidKelly/docker-borg-client/actions)
+[![GitHub release](https://img.shields.io/github/v/release/DiarmuidKelly/docker-borg-client?logo=github)](https://github.com/DiarmuidKelly/docker-borg-client/releases)
+[![Licence](https://img.shields.io/github/license/DiarmuidKelly/docker-borg-client)](LICENCE)
+
 A minimal, generic Docker container for running [BorgBackup](https://www.borgbackup.org/) backups to any remote SSH-accessible Borg repository. Designed for TrueNAS but works anywhere Docker runs.
 
 ## Table of Contents
@@ -235,7 +243,7 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
 
 **Rate Limit Values:**
 - `-1` = Unlimited bandwidth (burst speeds)
-- `0` = Stopped (no backup, only valid for `BACKUP_RATE_LIMIT_OUT_WINDOW`)
+- `0` = Terminate backup outside window, auto-resume from checkpoint (only valid for `BACKUP_RATE_LIMIT_OUT_WINDOW`)
 - Positive number = Bandwidth limit in Mbps (e.g., `40` = 40 Mbps)
 
 **Use Cases:**
@@ -245,12 +253,12 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
    BACKUP_WINDOW_START=01:00
    BACKUP_WINDOW_END=07:00
    BACKUP_RATE_LIMIT_IN_WINDOW=-1    # Unlimited overnight
-   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Stopped during day
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Terminated and resumed via checkpoint
    ```
    - Backup runs at full speed during 1am-7am window
-   - Automatically stops at 7am via Borg checkpoint
-   - Resumes next night from checkpoint (~5 min retransmit)
-   - Completes 1.5TB in 3-4 nights
+   - Automatically terminated at 7am (checkpoint polling in final 30 min)
+   - Resumes next night from last checkpoint
+   - Completes 1.5TB in 3-4 nights with minimal rework
 
 2. **Continuous backup with daytime throttle**:
    ```bash
@@ -265,14 +273,22 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
    BACKUP_WINDOW_START=09:00
    BACKUP_WINDOW_END=17:00
    BACKUP_RATE_LIMIT_IN_WINDOW=20    # 20 Mbps during business hours
-   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Stopped outside business hours
+   BACKUP_RATE_LIMIT_OUT_WINDOW=0    # Terminated outside business hours
    ```
 
 **How It Works:**
-- Borg automatically creates checkpoints every 5 minutes during backup
-- When backup stops (window closes), only ~5 minutes of data needs retransmitting
-- Next backup run resumes automatically from last checkpoint
+- Borg (1.1+) automatically creates checkpoints every 30 minutes during backup
+- When backup window ends with `BACKUP_RATE_LIMIT_OUT_WINDOW=0`:
+  - Monitor polls for new checkpoints in final 30 minutes of window
+  - If new checkpoint detected → backup terminated immediately (minimizes wasted work)
+  - If window ends → backup terminated at deadline (hard stop)
+  - **Zero out-of-window bandwidth usage** (never exceeds window)
+- Next backup run automatically resumes from last checkpoint
+- Container restarts automatically break stale locks and resume from checkpoint
 - No manual intervention required
+
+**Requirements:**
+- Borg 1.1 or later (for checkpoint support within files)
 
 ### Volume Mounts
 
