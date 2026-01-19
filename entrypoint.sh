@@ -46,6 +46,12 @@ echo "========================================="
 if [ "$AUTO_INIT" = "true" ]; then
     echo "Checking if repository exists..."
 
+    # Clear any stale cache locks from previous interrupted sessions
+    # Container restart means previous backup is dead, so cache locks are stale
+    if [ -d "$BORG_CACHE_DIR" ]; then
+        find "$BORG_CACHE_DIR" -name "lock.*" -type f -delete 2>/dev/null || true
+    fi
+
     # Try to list repository and capture output
     BORG_CHECK_OUTPUT=$(borg list "$BORG_REPO" 2>&1)
     BORG_CHECK_EXIT=$?
@@ -65,6 +71,11 @@ if [ "$AUTO_INIT" = "true" ]; then
         echo "⚠️  Repository locked from previous session, breaking lock..."
         borg break-lock "$BORG_REPO" 2>/dev/null || true
         echo "Lock broken - next backup will resume from checkpoint"
+    elif echo "$BORG_CHECK_OUTPUT" | grep -q "Failed to create/acquire the lock"; then
+        # Cache is locked - clear stale cache locks and retry
+        echo "⚠️  Cache locked from previous session, clearing stale locks..."
+        find "$BORG_CACHE_DIR" -name "lock.*" -type f -delete 2>/dev/null || true
+        echo "Cache locks cleared - repository check will succeed on next startup"
     else
         # Repository doesn't exist - initialize it
         echo ""
