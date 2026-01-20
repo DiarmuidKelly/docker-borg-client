@@ -137,6 +137,19 @@ else
 
     echo ""
     echo "ERROR: Backup failed!"
+    echo "Exit code: ${EXIT_CODE}"
+    echo "Duration: ${DURATION}s"
+    echo ""
+    echo "Exit code reference (with BORG_EXIT_CODES=modern):"
+    echo "  0: Success"
+    echo "  1: Generic warning"
+    echo "  2: Generic error"
+    echo "  3-99: Specific errors"
+    echo "  100-127: Specific warnings"
+    echo "  128+N: Killed by signal N (e.g. 143 = SIGTERM)"
+    echo ""
+    echo "For specific error/warning meanings, see:"
+    echo "  https://borgbackup.readthedocs.io/en/stable/internals/frontends.html#message-ids"
     echo ""
 
     # Send failure notification
