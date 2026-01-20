@@ -1,20 +1,12 @@
 #!/bin/sh
 set -e
 
-# Check for existing checkpoint to resume
-echo "Checking for incomplete backups..."
-CHECKPOINT_ARCHIVE=$(borg list "$BORG_REPO" --short 2>/dev/null | grep '\.checkpoint$' | head -1 | sed 's/\.checkpoint$//')
-
-if [ -n "$CHECKPOINT_ARCHIVE" ]; then
-    # Resume existing checkpoint
-    ARCHIVE_NAME="$CHECKPOINT_ARCHIVE"
-    echo "📦 Resuming incomplete backup: $ARCHIVE_NAME"
-else
-    # No checkpoint found, create new timestamped archive
-    TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-    ARCHIVE_NAME="backup-${TIMESTAMP}"
-    echo "📦 Starting new backup: $ARCHIVE_NAME"
-fi
+# Create new timestamped archive
+# Note: Borg automatically handles checkpoint resume if interrupted
+# See: https://borgbackup.readthedocs.io/en/stable/faq.html#if-a-backup-stops-mid-way-does-the-already-backed-up-data-stay-there
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+ARCHIVE_NAME="backup-${TIMESTAMP}"
+echo "Starting backup: $ARCHIVE_NAME"
 
 START_TIME=$(date +%s)
 
@@ -36,10 +28,10 @@ check_backup_window() {
 RATE_LIMIT_MBPS=-1  # Default: unlimited
 
 if check_backup_window; then
-    echo "✓ Inside backup window"
+    echo "Inside backup window"
     RATE_LIMIT_MBPS="${BACKUP_RATE_LIMIT_IN_WINDOW:--1}"
 else
-    echo "⚠ Outside backup window"
+    echo "WARNING: Outside backup window"
     RATE_LIMIT_MBPS="${BACKUP_RATE_LIMIT_OUT_WINDOW:--1}"
 
     # If rate limit is 0 (stopped), exit gracefully
@@ -78,10 +70,13 @@ borg create \
 
 BORG_PID=$!
 
-# Verify we captured the correct PID (borg process)
-if ! ps -p $BORG_PID -o comm= 2>/dev/null | grep -q "borg"; then
+# Give borg a moment to start (needs time to initialize Python + SSH connection)
+sleep 2
+
+# Verify the process exists (borg runs via python, so we check PID exists, not name)
+if ! kill -0 $BORG_PID 2>/dev/null; then
     echo "ERROR: Failed to start borg or capture PID"
-    wait $BORG_PID
+    wait $BORG_PID 2>/dev/null || exit 1
     exit $?
 fi
 
@@ -110,7 +105,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     DURATION=$((END_TIME - START_TIME))
 
     echo ""
-    echo "✅ Backup completed successfully!"
+    echo "Backup completed successfully!"
     echo "Duration: ${DURATION}s"
     echo ""
 
@@ -130,7 +125,7 @@ if [ $EXIT_CODE -eq 0 ]; then
 elif [ $EXIT_CODE -eq 143 ]; then
     # SIGTERM (killed by window monitor at window end or after checkpoint)
     echo ""
-    echo "ℹ️  Backup terminated by window monitor"
+    echo "INFO: Backup terminated by window monitor"
     echo "Will resume from checkpoint in next window"
     echo ""
     exit 0  # Don't treat as failure
@@ -141,7 +136,20 @@ else
     DURATION=$((END_TIME - START_TIME))
 
     echo ""
-    echo "✗ Backup failed!"
+    echo "ERROR: Backup failed!"
+    echo "Exit code: ${EXIT_CODE}"
+    echo "Duration: ${DURATION}s"
+    echo ""
+    echo "Exit code reference (with BORG_EXIT_CODES=modern):"
+    echo "  0: Success"
+    echo "  1: Generic warning"
+    echo "  2: Generic error"
+    echo "  3-99: Specific errors"
+    echo "  100-127: Specific warnings"
+    echo "  128+N: Killed by signal N (e.g. 143 = SIGTERM)"
+    echo ""
+    echo "For specific error/warning meanings, see:"
+    echo "  https://borgbackup.readthedocs.io/en/stable/internals/frontends.html#message-ids"
     echo ""
 
     # Send failure notification

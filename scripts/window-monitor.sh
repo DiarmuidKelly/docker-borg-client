@@ -51,7 +51,7 @@ while kill -0 "$BORG_PID" 2>/dev/null; do
         RATE_OUT="${BACKUP_RATE_LIMIT_OUT_WINDOW:--1}"
 
         if [ "$RATE_OUT" = "0" ]; then
-            echo "⏹️  Window ended, terminating backup (PID: $BORG_PID)..."
+            echo "Window ended, terminating backup (PID: $BORG_PID)..."
             echo "Backup will auto-resume from checkpoint in next window"
             kill -TERM "$BORG_PID"
             exit 0
@@ -64,7 +64,7 @@ while kill -0 "$BORG_PID" 2>/dev/null; do
         # Start polling when we're within checkpoint interval of window end
         if [ "$TIME_UNTIL_WINDOW_END" -le "$CHECKPOINT_INTERVAL" ] && [ "$TIME_UNTIL_WINDOW_END" -gt 0 ]; then
             if [ "$POLLING_STARTED" -eq 0 ]; then
-                echo "⏰ Window ends in ${TIME_UNTIL_WINDOW_END}s, starting checkpoint polling..."
+                echo "Window ends in ${TIME_UNTIL_WINDOW_END}s, starting checkpoint polling..."
                 POLLING_STARTED=1
 
                 # Capture initial checkpoint state
@@ -78,14 +78,14 @@ while kill -0 "$BORG_PID" 2>/dev/null; do
                 CURRENT_CHECKPOINT=$(borg list --json "$BORG_REPO" 2>/dev/null | jq -r '.archives[]? | select(.name | endswith(".checkpoint")) | .name' | tail -1)
 
                 if [ -n "$CURRENT_CHECKPOINT" ] && [ "$CURRENT_CHECKPOINT" != "$INITIAL_CHECKPOINT" ]; then
-                    echo "✅ New checkpoint detected: $CURRENT_CHECKPOINT"
-                    echo "⏹️  Terminating backup early (PID: $BORG_PID) to minimize wasted work..."
+                    echo "New checkpoint detected: $CURRENT_CHECKPOINT"
+                    echo "Terminating backup early (PID: $BORG_PID) to minimize wasted work..."
                     kill -TERM "$BORG_PID"
                     exit 0
                 fi
 
                 LAST_POLL_TIME=$CURRENT_TIME
-                echo "🔍 Polled for checkpoint (${TIME_UNTIL_WINDOW_END}s until window end)"
+                echo "Polled for checkpoint (${TIME_UNTIL_WINDOW_END}s until window end)"
             fi
         fi
     fi

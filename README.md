@@ -377,7 +377,7 @@ services:
     image: diarmuidk/docker-borg-client:latest
     container_name: borg-backup
     environment:
-      - BORG_REPO=ssh://u123456@u123456.your-storagebox.de:23/./backups
+      - BORG_REPO=ssh://user@backup-server.com:22/~/backups
       - BORG_PASSPHRASE=your-strong-passphrase
       - BACKUP_PATHS=/data/photos:/data/documents
       - CRON_SCHEDULE=0 2 * * 0
@@ -398,9 +398,6 @@ volumes:
 ## Additional Guides
 
 - **TrueNAS API Key Setup**: [docs/truenas-api-key-setup.md](docs/truenas-api-key-setup.md) - Generate API keys for notifications
-- **Hetzner Storage Box**: [docs/setup-hetzner.md](docs/setup-hetzner.md) (coming soon)
-- **rsync.net**: [docs/setup-rsync-net.md](docs/setup-rsync-net.md) (coming soon)
-- **Self-hosted**: [docs/setup-self-hosted.md](docs/setup-self-hosted.md) (coming soon)
 
 ## Cron Schedule Examples
 
