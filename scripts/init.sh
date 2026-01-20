@@ -11,7 +11,7 @@ echo ""
 borg init --encryption=repokey "$BORG_REPO"
 
 echo ""
-echo "✅ Repository initialized successfully!"
+echo "Repository initialized successfully!"
 echo ""
 
 # Automatically export repository key
@@ -20,7 +20,7 @@ borg key export "$BORG_REPO" /borg/config/repo-key.txt
 
 echo ""
 echo "========================================="
-echo "⚠️  CRITICAL: BACKUP THESE CREDENTIALS"
+echo "CRITICAL: BACKUP THESE CREDENTIALS"
 echo "========================================="
 echo ""
 echo "1. Passphrase (from BORG_PASSPHRASE env var)"

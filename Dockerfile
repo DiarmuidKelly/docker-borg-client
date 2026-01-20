@@ -21,6 +21,9 @@ RUN chmod +x /entrypoint.sh /scripts/*.sh
 ENV BORG_CACHE_DIR=/borg/cache
 ENV BORG_CONFIG_DIR=/borg/config
 
+# Use modern exit codes for more specific error reporting
+ENV BORG_EXIT_CODES=modern
+
 # Set default SSH command for Borg (can be overridden via environment variable)
 ENV BORG_RSH="ssh -i /ssh/key -o StrictHostKeyChecking=accept-new"
 
