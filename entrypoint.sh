@@ -53,7 +53,7 @@ shutdown_handler() {
         "Borg Backup Container Stopping" \
         "Container shutdown initiated"
 }
-trap shutdown_handler SIGTERM SIGINT
+trap shutdown_handler TERM INT
 
 # Auto-initialize repository if enabled and not exists
 if [ "$AUTO_INIT" = "true" ]; then
