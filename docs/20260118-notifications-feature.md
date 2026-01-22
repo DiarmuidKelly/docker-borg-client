@@ -1,5 +1,7 @@
 # Notifications Feature
 
+> **Update (2026-01)**: This feature was implemented using TrueNAS WebSocket JSON-RPC API instead of REST API. TrueNAS SCALE 25.04+ deprecated the REST API in favour of WebSocket JSON-RPC. See the implementation in `scripts/notify.sh` which uses `websocat` for WebSocket communication.
+
 ## Overview
 
 Add notification support to Docker Borg Client to alert users about backup success/failure and other important events. This is particularly useful for TrueNAS SCALE users who want to monitor automated backups.

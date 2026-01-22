@@ -42,6 +42,19 @@ fi
 
 echo "========================================="
 
+# Send startup notification
+/scripts/notify.sh "container.startup" "INFO" \
+    "Borg Backup Container Started" \
+    "Repository: ${BORG_REPO}, Schedule: ${CRON_SCHEDULE}"
+
+# Set up shutdown notification trap
+shutdown_handler() {
+    /scripts/notify.sh "container.shutdown" "INFO" \
+        "Borg Backup Container Stopping" \
+        "Container shutdown initiated"
+}
+trap shutdown_handler TERM INT
+
 # Auto-initialize repository if enabled and not exists
 if [ "$AUTO_INIT" = "true" ]; then
     echo "Checking if repository exists..."
