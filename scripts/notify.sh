@@ -35,7 +35,7 @@ should_notify() {
     return $?
 }
 
-# Send notification to TrueNAS API
+# Send notification to TrueNAS API via WebSocket JSON-RPC
 notify_truenas() {
     local api_url="${NOTIFY_TRUENAS_API_URL}"
     local api_key="${NOTIFY_TRUENAS_API_KEY}"
@@ -47,44 +47,52 @@ notify_truenas() {
         return 1
     fi
 
-    # Build curl options
-    local curl_opts=""
-    if [ "$verify_ssl" = "false" ]; then
-        curl_opts="-k"
-    fi
+    # Convert HTTP URL to WebSocket URL and ensure /api/current endpoint
+    local ws_url
+    ws_url=$(echo "$api_url" | sed -e 's|^http://|ws://|' -e 's|^https://|wss://|' -e 's|/api/v.*||' -e 's|/$||')
+    ws_url="${ws_url}/api/current"
 
-    # Build JSON payload
+    # Escape JSON strings (basic escaping for quotes and newlines)
+    local escaped_title escaped_message
+    escaped_title=$(echo "$EVENT_TITLE" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g')
+    escaped_message=$(echo "$EVENT_MESSAGE" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g')
+
+    # Build JSON-RPC 2.0 payload for alert.oneshot_create
     local json_payload
     json_payload=$(cat <<EOF
-{
-  "klass": "CustomAlert",
-  "args": {
-    "title": "$EVENT_TITLE",
-    "message": "$EVENT_MESSAGE",
-    "level": "$EVENT_LEVEL"
-  }
-}
+{"jsonrpc":"2.0","id":1,"method":"alert.oneshot_create","params":["BorgBackupAlert",{"title":"$escaped_title","message":"$escaped_message","level":"$EVENT_LEVEL"}]}
 EOF
 )
 
-    # Send notification
+    # Build websocat options
+    local websocat_opts="--text --one-message --jsonrpc --header=\"Authorization: Bearer ${api_key}\""
+
+    if [ "$verify_ssl" = "false" ]; then
+        websocat_opts="$websocat_opts --insecure"
+    fi
+
+    # Send notification via WebSocket
     local response
-    response=$(curl -s -w "\n%{http_code}" $curl_opts \
-        -X POST "${api_url}/alert/oneshot/create" \
-        -H "Authorization: Bearer ${api_key}" \
-        -H "Content-Type: application/json" \
-        -d "$json_payload" 2>&1)
+    response=$(echo "$json_payload" | websocat --text --one-message --jsonrpc \
+        --header="Authorization: Bearer ${api_key}" \
+        $([ "$verify_ssl" = "false" ] && echo "--insecure") \
+        "$ws_url" 2>&1)
 
-    local http_code
-    local body
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
+    local exit_code=$?
 
-    if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
-        echo "✓ TrueNAS notification sent: $EVENT_TITLE"
-        return 0
+    if [ $exit_code -eq 0 ]; then
+        # Check for JSON-RPC error in response
+        if echo "$response" | grep -q '"error"'; then
+            local error_msg
+            error_msg=$(echo "$response" | jq -r '.error.message // .error' 2>/dev/null || echo "$response")
+            echo "✗ TrueNAS notification failed: $error_msg"
+            return 1
+        else
+            echo "✓ TrueNAS notification sent: $EVENT_TITLE"
+            return 0
+        fi
     else
-        echo "✗ TrueNAS notification failed (HTTP $http_code): $body"
+        echo "✗ TrueNAS notification failed (websocat exit $exit_code): $response"
         return 1
     fi
 }

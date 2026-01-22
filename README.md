@@ -223,7 +223,7 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NOTIFY_TRUENAS_ENABLED` | No | `false` | Enable TrueNAS API notifications |
-| `NOTIFY_TRUENAS_API_URL` | No | - | TrueNAS API URL (e.g., `http://192.168.1.100/api/v2.0`) |
+| `NOTIFY_TRUENAS_API_URL` | No | - | TrueNAS base URL (e.g., `http://192.168.1.100` or `https://truenas.local`) |
 | `NOTIFY_TRUENAS_API_KEY` | No | - | TrueNAS API key (generate in Settings → API Keys) |
 | `NOTIFY_TRUENAS_VERIFY_SSL` | No | `true` | Verify SSL certificates (set to `false` for self-signed) |
 | `NOTIFY_EVENTS` | No | `backup.failure,prune.failure` | Comma-separated list of events to notify |
@@ -413,7 +413,9 @@ The `CRON_SCHEDULE` variable uses standard cron format: `minute hour day-of-mont
 
 ## Notifications
 
-Docker Borg Client supports sending notifications to TrueNAS SCALE via the TrueNAS API. This allows you to receive alerts through your existing TrueNAS notification channels (email, Slack, etc.).
+Docker Borg Client supports sending notifications to TrueNAS SCALE via the TrueNAS WebSocket JSON-RPC API. This allows you to receive alerts through your existing TrueNAS notification channels (email, Slack, etc.).
+
+**Compatibility**: TrueNAS SCALE 25.04+ (uses WebSocket JSON-RPC API)
 
 ### Quick Setup (TrueNAS SCALE)
 
@@ -425,11 +427,13 @@ Docker Borg Client supports sending notifications to TrueNAS SCALE via the TrueN
 2. **Configure Notifications**:
    ```bash
    NOTIFY_TRUENAS_ENABLED=true
-   NOTIFY_TRUENAS_API_URL=http://192.168.1.100/api/v2.0  # Your TrueNAS IP
+   NOTIFY_TRUENAS_API_URL=http://192.168.1.100  # Your TrueNAS IP (http or https)
    NOTIFY_TRUENAS_API_KEY=1-abc123yourkey
    NOTIFY_TRUENAS_VERIFY_SSL=false  # For self-signed certificates
    NOTIFY_EVENTS=backup.failure,backup.success
    ```
+
+   **Note**: The URL format has changed. Use `http://IP` or `https://IP` (not `/api/v2.0`). The script automatically converts to the WebSocket endpoint (`ws://` or `wss://`).
 
 3. **Test Notification**:
    ```bash
