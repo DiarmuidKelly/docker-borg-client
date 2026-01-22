@@ -47,9 +47,9 @@ notify_truenas() {
         return 1
     fi
 
-    # Convert HTTP URL to WebSocket URL and ensure /api/current endpoint
+    # Ensure /api/current endpoint (strip trailing slash first)
     local ws_url
-    ws_url=$(echo "$api_url" | sed -e 's|^http://|ws://|' -e 's|^https://|wss://|' -e 's|/api/v.*||' -e 's|/$||')
+    ws_url=$(echo "$api_url" | sed 's|/$||')
     ws_url="${ws_url}/api/current"
 
     # Escape JSON strings (basic escaping for quotes and newlines)
@@ -63,13 +63,6 @@ notify_truenas() {
 {"jsonrpc":"2.0","id":1,"method":"alert.oneshot_create","params":["BorgBackupAlert",{"title":"$escaped_title","message":"$escaped_message","level":"$EVENT_LEVEL"}]}
 EOF
 )
-
-    # Build websocat options
-    local websocat_opts="--text --one-message --jsonrpc --header=\"Authorization: Bearer ${api_key}\""
-
-    if [ "$verify_ssl" = "false" ]; then
-        websocat_opts="$websocat_opts --insecure"
-    fi
 
     # Send notification via WebSocket
     local response

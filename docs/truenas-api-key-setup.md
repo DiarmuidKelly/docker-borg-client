@@ -44,13 +44,12 @@ Add the API key to your `.env` file or Docker Compose environment variables:
 
 ```bash
 NOTIFY_TRUENAS_ENABLED=true
-NOTIFY_TRUENAS_API_URL=http://192.168.1.100  # Replace with your TrueNAS IP (no /api path)
-NOTIFY_TRUENAS_API_KEY=1-abc123yourapikey    # Your actual API key
-NOTIFY_TRUENAS_VERIFY_SSL=false              # For self-signed certs
+NOTIFY_TRUENAS_API_URL=ws://192.168.1.100  # Replace with your TrueNAS IP
+NOTIFY_TRUENAS_API_KEY=1-abc123yourapikey  # Your actual API key
 NOTIFY_EVENTS=backup.failure,backup.success
 ```
 
-**Important**: Use the base URL only (`http://IP` or `https://IP`). The script automatically converts this to the WebSocket endpoint (`ws://IP/api/current`).
+**Important**: Use `ws://` for WebSocket connections (recommended for local networks).
 
 ## Finding Your TrueNAS IP Address
 
@@ -72,36 +71,28 @@ If you don't know your TrueNAS IP address:
    # Example: http://192.168.1.100
    ```
 
-## HTTP vs HTTPS
+## WebSocket Protocol
 
-### Using HTTP (Recommended for Internal Networks)
-
-```bash
-NOTIFY_TRUENAS_API_URL=http://192.168.1.100
-```
-
-**Pros**:
-- Simpler setup
-- No certificate issues
-- Secure for internal/home networks
-
-**Use when**: TrueNAS is on your local network
-
-### Using HTTPS with Self-Signed Certificate
+### Using ws:// (Recommended for Internal Networks)
 
 ```bash
-NOTIFY_TRUENAS_API_URL=https://192.168.1.100
-NOTIFY_TRUENAS_VERIFY_SSL=false  # Required for self-signed certs
+NOTIFY_TRUENAS_API_URL=ws://192.168.1.100
 ```
 
-**Pros**:
-- Encrypted communication (wss:// WebSocket)
-- Better for enterprise environments
+**Use when**: TrueNAS is on your local/home network (most common)
 
-**Use when**:
-- Corporate environment requires HTTPS
-- Accessing TrueNAS remotely
-- You have a valid SSL certificate
+**Why unencrypted is fine**: WebSocket traffic stays within your local network and doesn't traverse the internet. The API key provides authentication.
+
+### Using wss:// (Encrypted WebSocket)
+
+Only needed if you have proper SSL certificates configured on TrueNAS:
+
+```bash
+NOTIFY_TRUENAS_API_URL=wss://truenas.local
+NOTIFY_TRUENAS_VERIFY_SSL=false  # Only if using self-signed certificates
+```
+
+**Use when**: Corporate environment requires encrypted traffic or accessing TrueNAS remotely.
 
 ## Testing the Configuration
 
@@ -147,10 +138,10 @@ If configured correctly, you'll receive a notification when the backup completes
 **Problem**: Cannot reach TrueNAS WebSocket endpoint
 
 **Solution**:
-- Verify the URL format: `http://IP` (no `/api` path needed)
+- Verify the URL format: `ws://IP` (use WebSocket protocol)
 - Check your TrueNAS IP address is correct
 - Ensure TrueNAS is accessible from the container network
-- Try `http://` instead of `https://` for testing
+- Test connectivity: `ping 192.168.1.100` from container
 
 ### "Could not resolve host"
 
@@ -181,7 +172,7 @@ If configured correctly, you'll receive a notification when the backup completes
 
 1. **Store API Key Securely**: Use environment variables, never commit to git
 2. **Limit API Key Scope**: Use a dedicated API key for Borg backup only
-3. **Use HTTP for Local Networks**: HTTPS overhead not needed for internal networks
+3. **Use ws:// for Local Networks**: Unencrypted WebSocket is fine for internal networks
 4. **Rotate Keys Periodically**: Generate new API keys every 6-12 months
 5. **Monitor API Key Usage**: Check TrueNAS audit logs regularly
 
