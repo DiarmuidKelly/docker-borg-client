@@ -228,7 +228,7 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `NOTIFY_TRUENAS_VERIFY_SSL` | No | `true` | Verify SSL certificates for wss:// (set to `false` for self-signed) |
 | `NOTIFY_EVENTS` | No | `backup.failure,prune.failure` | Comma-separated list of events to notify |
 
-**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`
+**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`, `container.startup`, `container.shutdown`
 
 See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed instructions.
 
@@ -448,8 +448,12 @@ For detailed setup instructions, see [TrueNAS API Key Setup Guide](docs/truenas-
 - `backup.failure` - Backup failed
 - `prune.success` - Prune completed successfully
 - `prune.failure` - Prune failed
+- `container.startup` - Container started (useful for monitoring container health)
+- `container.shutdown` - Container stopping (useful for tracking restarts/stops)
 
 **Default**: Only failures are notified (`backup.failure,prune.failure`)
+
+**Tip**: Add `container.startup,container.shutdown` to track container lifecycle events
 
 ## Monitoring
 
