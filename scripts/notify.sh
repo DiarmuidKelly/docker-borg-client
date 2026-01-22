@@ -66,10 +66,16 @@ EOF
 
     # Send notification via WebSocket
     local response
-    response=$(echo "$json_payload" | websocat --text --one-message --jsonrpc \
-        --header="Authorization: Bearer ${api_key}" \
-        $([ "$verify_ssl" = "false" ] && echo "--insecure") \
-        "$ws_url" 2>&1)
+    if [ "$verify_ssl" = "false" ]; then
+        response=$(echo "$json_payload" | websocat --text --one-message --jsonrpc \
+            --header="Authorization: Bearer ${api_key}" \
+            --insecure \
+            "$ws_url" 2>&1)
+    else
+        response=$(echo "$json_payload" | websocat --text --one-message --jsonrpc \
+            --header="Authorization: Bearer ${api_key}" \
+            "$ws_url" 2>&1)
+    fi
 
     local exit_code=$?
 
