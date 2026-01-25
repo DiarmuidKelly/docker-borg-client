@@ -11,8 +11,13 @@ setup() {
     mkdir -p "$TEST_DIR/scripts"
     mkdir -p "$TEST_DIR/bin"
 
-    # Mock scripts directory
-    cp "${BATS_TEST_DIRNAME}/../scripts/check-window.sh" "$TEST_DIR/scripts/"
+    # Create a simple mock check-window.sh instead of copying the real one
+    cat > "$TEST_DIR/scripts/check-window.sh" << 'EOF'
+#!/bin/sh
+# Simple mock that always returns success (in window)
+exit 0
+EOF
+    chmod +x "$TEST_DIR/scripts/check-window.sh"
 
     # Create mock notify.sh
     cat > "$TEST_DIR/scripts/notify.sh" << 'EOF'
@@ -67,7 +72,7 @@ teardown() {
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 echo "BORG: create $@"
-sleep 3  # Need longer sleep for the PID check to pass
+sleep 2.1  # Just enough for backup.sh PID check (needs >2 seconds)
 exit 0
 EOF
     chmod +x "$TEST_DIR/bin/borg"
@@ -245,7 +250,7 @@ EOF
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 echo "BORG: Running"
-sleep 3  # Need longer sleep for the PID check and monitor to start
+sleep 2.1  # Just enough for backup.sh PID check (needs >2 seconds)
 exit 0
 EOF
     chmod +x "$TEST_DIR/bin/borg"
