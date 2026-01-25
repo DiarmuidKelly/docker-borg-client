@@ -11,8 +11,27 @@
 
 A minimal, generic Docker container for running [BorgBackup](https://www.borgbackup.org/) backups to any remote SSH-accessible Borg repository. Designed for TrueNAS but works anywhere Docker runs.
 
+## Overview
+
+**Why Docker Borg Client?**
+
+If you're running a home server, NAS, or any system with important data, you need reliable, automated backups. This container solves the "backup problem" with a production-ready solution that just works:
+
+- **Set it and forget it** - Configure once, runs forever. Automated backups on your schedule with smart retention policies that keep recent backups while pruning old ones.
+- **Production Upstream technology** - Built on [BorgBackup](https://www.borgbackup.org/), used by thousands for petabytes of data. Provides deduplication, compression, and encryption that can reduce backup sizes by 95%+.
+- **Cost-effective** - Works with any SSH-accessible storage: a Raspberry Pi at a friend's house, cloud hosting provider, or any VPS. No vendor lock-in.
+- **TrueNAS optimized** - Built for the TrueNAS ecosystem - but in theory should run on an docker enginer.
+- **Recovery focused** - Your backups are only as good as your ability to restore. Includes comprehensive restore tools and disaster recovery documentation. Every backup is encrypted client-side - even if your backup server is compromised, your data remains safe.
+
+**Perfect for:**
+- Home lab enthusiasts backing up Docker volumes, databases, and configuration
+- TrueNAS users wanting automated off-site backups of their datasets
+- Small businesses needing GDPR-compliant encrypted backups
+- Anyone who learned the hard way that RAID is not a backup
+
 ## Table of Contents
 
+- [Overview](#overview)
 - [Features](#features)
 - [Quick Start](#quick-start)
   - [Prerequisites](#prerequisites)
