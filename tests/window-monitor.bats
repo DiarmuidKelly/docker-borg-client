@@ -43,7 +43,7 @@ teardown() {
 # Test: Script runs with valid PID when window configured
 @test "runs with valid PID and window configuration" {
     # Create a background process to monitor
-    sleep 10 &
+    sleep 3 &
     TEST_PID=$!
 
     export BACKUP_WINDOW_START="00:00"
@@ -53,8 +53,10 @@ teardown() {
     # Create mock scripts directory first
     mkdir -p "$TEST_DIR/scripts"
 
-    # Replace /scripts/check-window.sh path for testing
-    sed "s|/scripts/check-window.sh|$TEST_DIR/scripts/check-window.sh|g" "$WINDOW_MONITOR_SCRIPT" > "$TEST_DIR/window-monitor-test.sh"
+    # Replace /scripts/check-window.sh path for testing and reduce CHECK_INTERVAL for speed
+    sed -e "s|/scripts/check-window.sh|$TEST_DIR/scripts/check-window.sh|g" \
+        -e "s|CHECK_INTERVAL=60|CHECK_INTERVAL=1|g" \
+        "$WINDOW_MONITOR_SCRIPT" > "$TEST_DIR/window-monitor-test.sh"
 
     # Create mock check-window.sh that always returns true
     cat > "$TEST_DIR/scripts/check-window.sh" << 'EOF'
@@ -82,8 +84,8 @@ EOF
 
 # Test: Terminates process when window ends with rate limit 0
 @test "terminates process when window ends and rate limit is 0" {
-    # Create a long-running background process
-    sleep 30 &
+    # Create a background process for monitoring
+    sleep 5 &
     TEST_PID=$!
 
     export BACKUP_WINDOW_START="00:00"
@@ -93,8 +95,10 @@ EOF
     # Create mock scripts directory first
     mkdir -p "$TEST_DIR/scripts"
 
-    # Replace /scripts/check-window.sh path for testing
-    sed "s|/scripts/check-window.sh|$TEST_DIR/scripts/check-window.sh|g" "$WINDOW_MONITOR_SCRIPT" > "$TEST_DIR/window-monitor-test.sh"
+    # Replace /scripts/check-window.sh path for testing and reduce CHECK_INTERVAL for speed
+    sed -e "s|/scripts/check-window.sh|$TEST_DIR/scripts/check-window.sh|g" \
+        -e "s|CHECK_INTERVAL=60|CHECK_INTERVAL=1|g" \
+        "$WINDOW_MONITOR_SCRIPT" > "$TEST_DIR/window-monitor-test.sh"
 
     # Create mock check-window.sh that returns false (outside window)
     cat > "$TEST_DIR/scripts/check-window.sh" << 'EOF'
@@ -113,7 +117,8 @@ EOF
     chmod +x "$TEST_DIR/bin/borg"
     PATH="$TEST_DIR/bin:$PATH"
 
-    run sh "$TEST_DIR/window-monitor-test.sh" "$TEST_PID"
+    run timeout 3 sh "$TEST_DIR/window-monitor-test.sh" "$TEST_PID"
+    # Script should exit quickly after detecting we're outside window
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "Window ended, terminating backup"
 
@@ -124,7 +129,7 @@ EOF
 # Test: Continues when rate limit is not 0 outside window
 @test "continues when rate limit is not 0 outside window" {
     # Create a background process
-    sleep 10 &
+    sleep 3 &
     TEST_PID=$!
 
     export BACKUP_WINDOW_START="00:00"
@@ -134,8 +139,10 @@ EOF
     # Create mock scripts directory first
     mkdir -p "$TEST_DIR/scripts"
 
-    # Replace /scripts/check-window.sh path
-    sed "s|/scripts/check-window.sh|$TEST_DIR/scripts/check-window.sh|g" "$WINDOW_MONITOR_SCRIPT" > "$TEST_DIR/window-monitor-test.sh"
+    # Replace /scripts/check-window.sh path and reduce CHECK_INTERVAL for speed
+    sed -e "s|/scripts/check-window.sh|$TEST_DIR/scripts/check-window.sh|g" \
+        -e "s|CHECK_INTERVAL=60|CHECK_INTERVAL=1|g" \
+        "$WINDOW_MONITOR_SCRIPT" > "$TEST_DIR/window-monitor-test.sh"
 
     # Mock check-window.sh - alternates between in/out of window
     cat > "$TEST_DIR/scripts/check-window.sh" << 'EOF'
