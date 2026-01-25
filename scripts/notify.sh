@@ -57,38 +57,55 @@ notify_truenas() {
     escaped_title=$(echo "$EVENT_TITLE" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g')
     escaped_message=$(echo "$EVENT_MESSAGE" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g')
 
-    # Build JSON-RPC 2.0 payload for alert.oneshot_create
-    local json_payload
-    json_payload=$(cat <<EOF
-{"jsonrpc":"2.0","id":1,"method":"alert.oneshot_create","params":["BorgBackupAlert",{"title":"$escaped_title","message":"$escaped_message","level":"$EVENT_LEVEL"}]}
-EOF
-)
+    # NOTE: TrueNAS API limitation - alert.oneshot_create creates alerts but they don't
+    # appear in the UI or trigger email services. Only predefined system alert classes
+    # trigger notifications. This creates an alert record for logging purposes only.
 
-    # Send notification via WebSocket
+    # Send authentication and notification via WebSocket
+    # First authenticate with API key, then send the notification
     local response
     if [ "$verify_ssl" = "false" ]; then
-        response=$(echo "$json_payload" | websocat --text --one-message --jsonrpc \
-            --header="Authorization: Bearer ${api_key}" \
-            --insecure \
-            "$ws_url" 2>&1)
+        response=$( (
+            echo '{"jsonrpc":"2.0","id":1,"method":"auth.login_with_api_key","params":["'"${api_key}"'"]}'
+            sleep 1
+            echo '{"jsonrpc":"2.0","id":2,"method":"alert.oneshot_create","params":["CustomAlert",{"title":"'"$escaped_title"'","message":"'"$escaped_message"'","level":"'"$EVENT_LEVEL"'"}]}'
+            sleep 1
+        ) | websocat --text --insecure "$ws_url" 2>&1)
     else
-        response=$(echo "$json_payload" | websocat --text --one-message --jsonrpc \
-            --header="Authorization: Bearer ${api_key}" \
-            "$ws_url" 2>&1)
+        response=$( (
+            echo '{"jsonrpc":"2.0","id":1,"method":"auth.login_with_api_key","params":["'"${api_key}"'"]}'
+            sleep 1
+            echo '{"jsonrpc":"2.0","id":2,"method":"alert.oneshot_create","params":["CustomAlert",{"title":"'"$escaped_title"'","message":"'"$escaped_message"'","level":"'"$EVENT_LEVEL"'"}]}'
+            sleep 1
+        ) | websocat --text "$ws_url" 2>&1)
     fi
 
     local exit_code=$?
 
     if [ $exit_code -eq 0 ]; then
-        # Check for JSON-RPC error in response
-        if echo "$response" | grep -q '"error"'; then
-            local error_msg
-            error_msg=$(echo "$response" | jq -r '.error.message // .error' 2>/dev/null || echo "$response")
-            echo "✗ TrueNAS notification failed: $error_msg"
-            return 1
+        # Check if we got both responses
+        local auth_result notification_result
+        auth_result=$(echo "$response" | grep '"id":1')
+        notification_result=$(echo "$response" | grep '"id":2')
+
+        # Check if authentication was successful
+        if echo "$auth_result" | grep -q '"result":true'; then
+            # Check if notification was created (should have a numeric result)
+            if echo "$notification_result" | grep -q '"result":[0-9]'; then
+                echo "✓ TrueNAS notification logged: $EVENT_TITLE"
+                return 0
+            elif echo "$notification_result" | grep -q '"error"'; then
+                local error_msg
+                error_msg=$(echo "$notification_result" | jq -r '.error.message // .error' 2>/dev/null || echo "unknown error")
+                echo "✗ TrueNAS notification failed: $error_msg"
+                return 1
+            else
+                echo "✗ TrueNAS notification failed: unexpected response"
+                return 1
+            fi
         else
-            echo "✓ TrueNAS notification sent: $EVENT_TITLE"
-            return 0
+            echo "✗ TrueNAS authentication failed"
+            return 1
         fi
     else
         echo "✗ TrueNAS notification failed (websocat exit $exit_code): $response"
