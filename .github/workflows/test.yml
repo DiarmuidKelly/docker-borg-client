@@ -10,6 +10,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test-file:
+          - auto-release
+          - backup
+          - check-window
+          - init
+          - notify
+          - prune
+          - restore
+          - window-monitor
 
     steps:
     - name: Checkout code
@@ -17,18 +29,18 @@ jobs:
 
     - name: Setup bats
       run: |
-        sudo apt-get update
-        sudo apt-get install -y bats
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq bats
 
-    - name: Run unit tests
-      run: make test
+    - name: Run ${{ matrix.test-file }} tests
+      run: bats tests/${{ matrix.test-file }}.bats
       continue-on-error: true  # Allow workflow to continue even if some tests fail
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results
+        name: test-results-${{ matrix.test-file }}
         path: |
           tests/*.log
           tests/*.out
