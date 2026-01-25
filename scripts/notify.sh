@@ -85,13 +85,13 @@ notify_truenas() {
     if [ $exit_code -eq 0 ]; then
         # Check if we got both responses
         local auth_result notification_result
-        auth_result=$(echo "$response" | grep '"id":1')
-        notification_result=$(echo "$response" | grep '"id":2')
+        auth_result=$(echo "$response" | grep '"id": *1')
+        notification_result=$(echo "$response" | grep '"id": *2')
 
         # Check if authentication was successful
-        if echo "$auth_result" | grep -q '"result":true'; then
+        if echo "$auth_result" | grep -q '"result": *true'; then
             # Check if notification was created (should have a numeric result)
-            if echo "$notification_result" | grep -q '"result":[0-9]'; then
+            if echo "$notification_result" | grep -q '"result": *[0-9]'; then
                 echo "✓ TrueNAS notification logged: $EVENT_TITLE"
                 return 0
             elif echo "$notification_result" | grep -q '"error"'; then
