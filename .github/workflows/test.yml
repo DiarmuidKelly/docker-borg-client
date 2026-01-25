@@ -56,4 +56,4 @@ jobs:
 
     - name: Test Docker image
       run: |
-        docker run --rm docker-borg-client:test sh -c "echo 'Container runs successfully'"
+        docker run --rm -e BORG_REPO=/tmp/test-repo docker-borg-client:test sh -c "echo 'Container runs successfully'"
