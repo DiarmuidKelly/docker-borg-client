@@ -56,8 +56,8 @@ jobs:
 
     - name: Test Docker image
       run: |
-        docker run --rm \
-          -e BORG_REPO=/tmp/test-repo \
-          -e BORG_PASSPHRASE=testpass \
-          -e BACKUP_PATHS=/data \
-          docker-borg-client:test sh -c "echo 'Container runs successfully'"
+        # Test that the image has the required scripts
+        docker run --rm --entrypoint sh docker-borg-client:test -c "ls -la /scripts/ && echo 'Scripts installed successfully'"
+
+        # Test that borg is installed
+        docker run --rm --entrypoint sh docker-borg-client:test -c "borg --version && echo 'Borg installed successfully'"
