@@ -5,6 +5,7 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/diarmuidk/docker-borg-client?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
 [![Docker Stars](https://img.shields.io/docker/stars/diarmuidk/docker-borg-client?logo=docker)](https://hub.docker.com/r/diarmuidk/docker-borg-client)
 [![CI](https://github.com/DiarmuidKelly/docker-borg-client/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/DiarmuidKelly/docker-borg-client/actions)
+[![Tests](https://github.com/DiarmuidKelly/docker-borg-client/actions/workflows/test.yml/badge.svg)](https://github.com/DiarmuidKelly/docker-borg-client/actions/workflows/test.yml)
 [![GitHub release](https://img.shields.io/github/v/release/DiarmuidKelly/docker-borg-client?logo=github)](https://github.com/DiarmuidKelly/docker-borg-client/releases)
 [![Licence](https://img.shields.io/github/license/DiarmuidKelly/docker-borg-client)](LICENCE)
 
@@ -605,6 +606,8 @@ The exported key will be stored at `/borg/config/repo-key.txt` (persisted to you
 
 ## Development
 
+### Building
+
 Build locally:
 ```bash
 docker build -t docker-borg-client .
@@ -620,6 +623,55 @@ docker run --rm -it \
   -v ./ssh:/ssh:ro \
   docker-borg-client /scripts/backup.sh
 ```
+
+### Testing
+
+This project includes comprehensive unit tests for all shell scripts using the [bats-core](https://github.com/bats-core/bats-core) testing framework.
+
+#### Running Tests
+
+Run all tests:
+```bash
+make test
+```
+
+Run a specific test file:
+```bash
+bats tests/backup.bats
+```
+
+#### Installing bats
+
+**macOS:**
+```bash
+brew install bats-core
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install bats
+```
+
+**Other systems:**
+```bash
+git clone https://github.com/bats-core/bats-core.git
+cd bats-core
+./install.sh /usr/local
+```
+
+#### Test Coverage
+
+The test suite covers all shell scripts in the `/scripts` directory:
+- `auto-release.bats` - Tests container startup behavior
+- `backup.bats` - Tests backup execution and rate limiting
+- `check-window.bats` - Tests backup window time checking
+- `init.bats` - Tests repository initialization
+- `notify.bats` - Tests notification system
+- `prune.bats` - Tests archive pruning logic
+- `restore.bats` - Tests restore operations
+- `window-monitor.bats` - Tests window monitoring and backup termination
+
+Tests run automatically on every push and pull request via GitHub Actions.
 
 ## Contributing
 
