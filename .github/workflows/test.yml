@@ -59,4 +59,5 @@ jobs:
         docker run --rm \
           -e BORG_REPO=/tmp/test-repo \
           -e BORG_PASSPHRASE=testpass \
+          -e BACKUP_PATHS=/data \
           docker-borg-client:test sh -c "echo 'Container runs successfully'"
