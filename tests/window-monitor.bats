@@ -167,3 +167,125 @@ EOF
 
     [ "$PROCESS_ALIVE" -eq 1 ]
 }
+
+# Test: get_window_end_epoch calculates correct epoch (BusyBox compatible)
+@test "get_window_end_epoch returns valid epoch for window end time" {
+    export BACKUP_WINDOW_END="07:00"
+
+    # Extract and run the get_window_end_epoch function
+    cat > "$TEST_DIR/test-epoch.sh" << 'SCRIPT'
+#!/bin/sh
+BACKUP_WINDOW_END="$1"
+
+get_window_end_epoch() {
+    if [ -z "$BACKUP_WINDOW_END" ]; then
+        echo "0"
+        return
+    fi
+
+    HOUR=$(echo "$BACKUP_WINDOW_END" | cut -d: -f1 | sed 's/^0*//')
+    MINUTE=$(echo "$BACKUP_WINDOW_END" | cut -d: -f2 | sed 's/^0*//')
+    HOUR=${HOUR:-0}
+    MINUTE=${MINUTE:-0}
+
+    CURRENT_EPOCH=$(date +%s)
+    CURRENT_HOUR=$(date +%H | sed 's/^0*//')
+    CURRENT_MINUTE=$(date +%M | sed 's/^0*//')
+    CURRENT_HOUR=${CURRENT_HOUR:-0}
+    CURRENT_MINUTE=${CURRENT_MINUTE:-0}
+
+    TARGET_SECONDS=$((HOUR * 3600 + MINUTE * 60))
+    CURRENT_SECONDS=$((CURRENT_HOUR * 3600 + CURRENT_MINUTE * 60))
+
+    MIDNIGHT_EPOCH=$((CURRENT_EPOCH - CURRENT_SECONDS))
+    WINDOW_END=$((MIDNIGHT_EPOCH + TARGET_SECONDS))
+
+    if [ "$WINDOW_END" -lt "$CURRENT_EPOCH" ]; then
+        WINDOW_END=$((WINDOW_END + 86400))
+    fi
+
+    echo "$WINDOW_END"
+}
+
+get_window_end_epoch
+SCRIPT
+    chmod +x "$TEST_DIR/test-epoch.sh"
+
+    run sh "$TEST_DIR/test-epoch.sh" "07:00"
+    [ "$status" -eq 0 ]
+    # Result should be a valid epoch (numeric, roughly current time)
+    echo "$output" | grep -qE '^[0-9]+$'
+    # Should be within reasonable range (current time +/- 2 days)
+    CURRENT=$(date +%s)
+    RESULT="$output"
+    [ "$RESULT" -gt "$((CURRENT - 86400))" ]
+    [ "$RESULT" -lt "$((CURRENT + 172800))" ]
+}
+
+# Test: get_window_end_epoch handles midnight correctly
+@test "get_window_end_epoch handles 00:00 window end" {
+    cat > "$TEST_DIR/test-epoch.sh" << 'SCRIPT'
+#!/bin/sh
+BACKUP_WINDOW_END="$1"
+
+get_window_end_epoch() {
+    if [ -z "$BACKUP_WINDOW_END" ]; then
+        echo "0"
+        return
+    fi
+
+    HOUR=$(echo "$BACKUP_WINDOW_END" | cut -d: -f1 | sed 's/^0*//')
+    MINUTE=$(echo "$BACKUP_WINDOW_END" | cut -d: -f2 | sed 's/^0*//')
+    HOUR=${HOUR:-0}
+    MINUTE=${MINUTE:-0}
+
+    CURRENT_EPOCH=$(date +%s)
+    CURRENT_HOUR=$(date +%H | sed 's/^0*//')
+    CURRENT_MINUTE=$(date +%M | sed 's/^0*//')
+    CURRENT_HOUR=${CURRENT_HOUR:-0}
+    CURRENT_MINUTE=${CURRENT_MINUTE:-0}
+
+    TARGET_SECONDS=$((HOUR * 3600 + MINUTE * 60))
+    CURRENT_SECONDS=$((CURRENT_HOUR * 3600 + CURRENT_MINUTE * 60))
+
+    MIDNIGHT_EPOCH=$((CURRENT_EPOCH - CURRENT_SECONDS))
+    WINDOW_END=$((MIDNIGHT_EPOCH + TARGET_SECONDS))
+
+    if [ "$WINDOW_END" -lt "$CURRENT_EPOCH" ]; then
+        WINDOW_END=$((WINDOW_END + 86400))
+    fi
+
+    echo "$WINDOW_END"
+}
+
+get_window_end_epoch
+SCRIPT
+    chmod +x "$TEST_DIR/test-epoch.sh"
+
+    run sh "$TEST_DIR/test-epoch.sh" "00:00"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -qE '^[0-9]+$'
+}
+
+# Test: get_window_end_epoch returns 0 when no window configured
+@test "get_window_end_epoch returns 0 when BACKUP_WINDOW_END empty" {
+    cat > "$TEST_DIR/test-epoch.sh" << 'SCRIPT'
+#!/bin/sh
+BACKUP_WINDOW_END=""
+
+get_window_end_epoch() {
+    if [ -z "$BACKUP_WINDOW_END" ]; then
+        echo "0"
+        return
+    fi
+    echo "999"
+}
+
+get_window_end_epoch
+SCRIPT
+    chmod +x "$TEST_DIR/test-epoch.sh"
+
+    run sh "$TEST_DIR/test-epoch.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}

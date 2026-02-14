@@ -21,7 +21,7 @@ fi
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
 RUN_ON_START="${RUN_ON_START:-false}"
 AUTO_INIT="${AUTO_INIT:-false}"
-BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new}"
+BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3}"
 
 export BORG_RSH
 
@@ -66,8 +66,11 @@ if [ "$AUTO_INIT" = "true" ]; then
     fi
 
     # Try to list repository and capture output
+    # Temporarily disable set -e to capture exit code
+    set +e
     BORG_CHECK_OUTPUT=$(borg list "$BORG_REPO" 2>&1)
     BORG_CHECK_EXIT=$?
+    set -e
 
     if [ $BORG_CHECK_EXIT -eq 0 ]; then
         # Repository exists and is accessible
@@ -85,10 +88,11 @@ if [ "$AUTO_INIT" = "true" ]; then
         borg break-lock "$BORG_REPO" 2>/dev/null || true
         echo "Lock broken - next backup will resume from checkpoint"
     elif echo "$BORG_CHECK_OUTPUT" | grep -q "Failed to create/acquire the lock"; then
-        # Cache is locked - clear stale cache locks and retry
-        echo "⚠️  Cache locked from previous session, clearing stale locks..."
+        # Repository or cache is locked - break remote lock and clear local cache locks
+        echo "⚠️  Repository locked from previous session, breaking lock..."
+        borg break-lock "$BORG_REPO" 2>/dev/null || true
         find "$BORG_CACHE_DIR" -name "lock.*" -type f -delete 2>/dev/null || true
-        echo "Cache locks cleared - repository check will succeed on next startup"
+        echo "Lock broken - next backup will proceed normally"
     else
         # Repository doesn't exist - initialize it
         echo ""

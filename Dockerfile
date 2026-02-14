@@ -26,6 +26,7 @@ ENV BORG_CONFIG_DIR=/borg/config
 ENV BORG_EXIT_CODES=modern
 
 # Set default SSH command for Borg (can be overridden via environment variable)
-ENV BORG_RSH="ssh -i /ssh/key -o StrictHostKeyChecking=accept-new"
+# Includes keepalive and retry options for connection resilience
+ENV BORG_RSH="ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3"
 
 ENTRYPOINT ["/entrypoint.sh"]
