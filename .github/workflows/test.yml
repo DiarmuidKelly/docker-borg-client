@@ -17,6 +17,7 @@ jobs:
           - auto-release
           - backup
           - check-window
+          - entrypoint
           - init
           - notify
           - prune

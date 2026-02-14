@@ -20,16 +20,29 @@ get_window_end_epoch() {
     fi
 
     # Parse HH:MM format
-    HOUR=$(echo "$BACKUP_WINDOW_END" | cut -d: -f1)
-    MINUTE=$(echo "$BACKUP_WINDOW_END" | cut -d: -f2)
+    HOUR=$(echo "$BACKUP_WINDOW_END" | cut -d: -f1 | sed 's/^0*//')
+    MINUTE=$(echo "$BACKUP_WINDOW_END" | cut -d: -f2 | sed 's/^0*//')
+    HOUR=${HOUR:-0}
+    MINUTE=${MINUTE:-0}
 
-    # Get today's date with window end time
-    WINDOW_END=$(date -d "today ${HOUR}:${MINUTE}:00" +%s 2>/dev/null || date -j -f "%H:%M:%S" "${HOUR}:${MINUTE}:00" +%s 2>/dev/null)
+    # Get current time components
+    CURRENT_EPOCH=$(date +%s)
+    CURRENT_HOUR=$(date +%H | sed 's/^0*//')
+    CURRENT_MINUTE=$(date +%M | sed 's/^0*//')
+    CURRENT_HOUR=${CURRENT_HOUR:-0}
+    CURRENT_MINUTE=${CURRENT_MINUTE:-0}
+
+    # Calculate seconds from midnight to window end
+    TARGET_SECONDS=$((HOUR * 3600 + MINUTE * 60))
+    CURRENT_SECONDS=$((CURRENT_HOUR * 3600 + CURRENT_MINUTE * 60))
+
+    # Calculate epoch for today's window end
+    MIDNIGHT_EPOCH=$((CURRENT_EPOCH - CURRENT_SECONDS))
+    WINDOW_END=$((MIDNIGHT_EPOCH + TARGET_SECONDS))
 
     # If window end is in the past (for overnight windows), use tomorrow
-    CURRENT_TIME=$(date +%s)
-    if [ "$WINDOW_END" -lt "$CURRENT_TIME" ]; then
-        WINDOW_END=$(date -d "tomorrow ${HOUR}:${MINUTE}:00" +%s 2>/dev/null || date -j -v+1d -f "%H:%M:%S" "${HOUR}:${MINUTE}:00" +%s 2>/dev/null)
+    if [ "$WINDOW_END" -lt "$CURRENT_EPOCH" ]; then
+        WINDOW_END=$((WINDOW_END + 86400))
     fi
 
     echo "$WINDOW_END"

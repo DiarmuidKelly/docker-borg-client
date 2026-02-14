@@ -142,16 +142,16 @@ EOF
 
 # Test: Rate limiting outside window
 @test "applies different rate limit outside backup window" {
-    # Set window we're definitely outside of
-    current_hour=$(date +%H)
-    if [ "$current_hour" -lt 12 ]; then
-        export BACKUP_WINDOW_START="20:00"
-        export BACKUP_WINDOW_END="20:01"
-    else
-        export BACKUP_WINDOW_START="06:00"
-        export BACKUP_WINDOW_END="06:01"
-    fi
+    export BACKUP_WINDOW_START="20:00"
+    export BACKUP_WINDOW_END="20:01"
     export BACKUP_RATE_LIMIT_OUT_WINDOW="5"
+
+    # Override mock to return "outside window"
+    cat > "$TEST_DIR/scripts/check-window.sh" << 'EOF'
+#!/bin/sh
+exit 1  # Outside window
+EOF
+    chmod +x "$TEST_DIR/scripts/check-window.sh"
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
@@ -171,16 +171,16 @@ EOF
 
 # Test: Stops backup when rate limit is 0 outside window
 @test "stops backup when BACKUP_RATE_LIMIT_OUT_WINDOW is 0" {
-    # Set window we're definitely outside of
-    current_hour=$(date +%H)
-    if [ "$current_hour" -lt 12 ]; then
-        export BACKUP_WINDOW_START="20:00"
-        export BACKUP_WINDOW_END="20:01"
-    else
-        export BACKUP_WINDOW_START="06:00"
-        export BACKUP_WINDOW_END="06:01"
-    fi
+    export BACKUP_WINDOW_START="20:00"
+    export BACKUP_WINDOW_END="20:01"
     export BACKUP_RATE_LIMIT_OUT_WINDOW="0"
+
+    # Override mock to return "outside window"
+    cat > "$TEST_DIR/scripts/check-window.sh" << 'EOF'
+#!/bin/sh
+exit 1  # Outside window
+EOF
+    chmod +x "$TEST_DIR/scripts/check-window.sh"
 
     sed "s|/scripts/|$TEST_DIR/scripts/|g" "$BACKUP_SCRIPT" > "$TEST_DIR/backup-test.sh"
 
