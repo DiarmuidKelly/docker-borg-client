@@ -180,3 +180,78 @@ EOF
     # break-lock should NOT be called
     ! grep -q "break-lock" "$BORG_COMMANDS_FILE"
 }
+
+# Helper to create cron configuration test script
+create_cron_test_script() {
+    cat > "$TEST_DIR/cron-test.sh" << 'EOF'
+#!/bin/sh
+set -e
+
+# Simulate defaults
+CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
+VERIFY_ENABLED="${VERIFY_ENABLED:-false}"
+VERIFY_CRON_SCHEDULE="${VERIFY_CRON_SCHEDULE:-0 3 1 * *}"
+
+# Create crontabs directory
+mkdir -p /tmp/test-crontabs-$$
+
+# Set up cron job
+echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /tmp/test-crontabs-$$/root
+echo "Cron job configured"
+
+# Set up verification cron job if enabled
+if [ "$VERIFY_ENABLED" = "true" ]; then
+    echo "$VERIFY_CRON_SCHEDULE /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /tmp/test-crontabs-$$/root
+    echo "Verification cron job configured"
+fi
+
+# Output the crontab for verification
+cat /tmp/test-crontabs-$$/root
+rm -rf /tmp/test-crontabs-$$
+EOF
+    chmod +x "$TEST_DIR/cron-test.sh"
+}
+
+# Test: Verification cron configured when VERIFY_ENABLED=true
+@test "verification cron configured when VERIFY_ENABLED=true" {
+    create_cron_test_script
+    export VERIFY_ENABLED="true"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Verification cron job configured"
+    echo "$output" | grep -q "/scripts/verify.sh"
+}
+
+# Test: Verification cron NOT configured when VERIFY_ENABLED=false
+@test "verification cron NOT configured when VERIFY_ENABLED=false" {
+    create_cron_test_script
+    export VERIFY_ENABLED="false"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q "Verification cron job configured"
+    ! echo "$output" | grep -q "/scripts/verify.sh"
+}
+
+# Test: Default verification schedule is 0 3 1 * *
+@test "default verification schedule is 0 3 1 * *" {
+    create_cron_test_script
+    export VERIFY_ENABLED="true"
+    unset VERIFY_CRON_SCHEDULE
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "0 3 1 \* \* /scripts/verify.sh"
+}
+
+# Test: Custom verification schedule is used
+@test "custom verification schedule is used" {
+    create_cron_test_script
+    export VERIFY_ENABLED="true"
+    export VERIFY_CRON_SCHEDULE="0 4 15 * *"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "0 4 15 \* \* /scripts/verify.sh"
+}

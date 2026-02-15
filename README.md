@@ -42,6 +42,7 @@ If you're running a home server, NAS, or any system with important data, you nee
   - [Environment Variables](#environment-variables)
   - [Notification Variables](#notification-variables-optional)
   - [Backup Time Window and Rate Limiting](#backup-time-window-and-rate-limiting-optional)
+  - [Repository Integrity Verification](#repository-integrity-verification-optional)
   - [Volume Mounts](#volume-mounts)
 - [Manual Operations](#manual-operations)
 - [Docker Compose Example](#docker-compose-example)
@@ -238,6 +239,9 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `PRUNE_KEEP_WEEKLY` | No | `4` | Weekly archives to keep |
 | `PRUNE_KEEP_MONTHLY` | No | `6` | Monthly archives to keep |
 | `TZ` | No | `UTC` | Timezone for cron jobs |
+| `VERIFY_ENABLED` | No | `false` | Enable scheduled repository integrity verification |
+| `VERIFY_CRON_SCHEDULE` | No | `0 3 1 * *` | Verification cron schedule (default: 1st of month at 03:00) |
+| `VERIFY_LEVEL` | No | `repository` | Verification depth: `repository`, `archives`, or `full` |
 
 #### Notification Variables (Optional)
 
@@ -247,9 +251,9 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `NOTIFY_TRUENAS_API_URL` | No | - | TrueNAS WebSocket URL (e.g., `ws://192.168.1.100` or `wss://truenas.local`) |
 | `NOTIFY_TRUENAS_API_KEY` | No | - | TrueNAS API key (generate in Settings → API Keys) |
 | `NOTIFY_TRUENAS_VERIFY_SSL` | No | `true` | Verify SSL certificates for wss:// (set to `false` for self-signed) |
-| `NOTIFY_EVENTS` | No | `backup.failure,prune.failure` | Comma-separated list of events to notify |
+| `NOTIFY_EVENTS` | No | `backup.failure,prune.failure,verify.failure` | Comma-separated list of events to notify |
 
-**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`, `container.startup`, `container.shutdown`
+**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`, `verify.success`, `verify.failure`, `container.startup`, `container.shutdown`
 
 See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed instructions.
 
@@ -311,6 +315,45 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
 **Requirements:**
 - Borg 1.1 or later (for checkpoint support within files)
 
+#### Repository Integrity Verification (Optional)
+
+Scheduled `borg check` verification ensures your backup repository remains healthy and detects corruption early.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VERIFY_ENABLED` | No | `false` | Enable scheduled verification |
+| `VERIFY_CRON_SCHEDULE` | No | `0 3 1 * *` | Cron schedule (default: 1st of month at 03:00) |
+| `VERIFY_LEVEL` | No | `repository` | Verification depth (see below) |
+
+**Verification Levels:**
+
+| Level | Command | Speed | Use Case |
+|-------|---------|-------|----------|
+| `repository` | `--repository-only` | Fast | Monthly scheduled checks - verifies repository structure |
+| `archives` | `--archives-only` | Medium | Periodic checks - verifies archive metadata integrity |
+| `full` | `--verify-data` | Very slow | Manual spot-checks only - reads and verifies all data |
+
+**Example Configuration:**
+```bash
+VERIFY_ENABLED=true
+VERIFY_CRON_SCHEDULE=0 3 1 * *    # 1st of month at 3am
+VERIFY_LEVEL=repository           # Fast repository check
+```
+
+**Behaviour Notes:**
+- Verification breaks any existing borg lock before running - if a backup is in progress, it will be interrupted and resume from checkpoint on next scheduled run
+- Verification is read-only and does not respect backup windows (no bandwidth impact)
+- `full` level reads all repository data and is very slow on large repos - use for manual spot-checks only
+
+**Manual Verification:**
+```bash
+# Quick repository check
+docker compose run --rm borg-backup /scripts/verify.sh
+
+# Full data verification (slow - use for spot checks)
+docker compose run --rm -e VERIFY_LEVEL=full borg-backup /scripts/verify.sh
+```
+
 ### Volume Mounts
 
 | Container Path | Purpose | Mode |
@@ -333,6 +376,7 @@ Then run any of the following commands:
 - **List backups**: `/scripts/restore.sh list`
 - **View archive info**: `/scripts/restore.sh info backup-2026-01-18_12-00-00`
 - **Check repository**: `/scripts/restore.sh check`
+- **Verify repository integrity**: `/scripts/verify.sh`
 - **Manual backup**: `/scripts/backup.sh`
 - **Manual prune**: `/scripts/prune.sh`
 
@@ -388,6 +432,16 @@ docker compose run --rm borg-backup /scripts/backup.sh
 
 ```bash
 docker compose run --rm borg-backup /scripts/prune.sh
+```
+
+#### Manual Verification
+
+```bash
+# Default (repository-only) check
+docker compose run --rm borg-backup /scripts/verify.sh
+
+# Full data verification (slow)
+docker compose run --rm -e VERIFY_LEVEL=full borg-backup /scripts/verify.sh
 ```
 
 ## Docker Compose Example
@@ -469,10 +523,12 @@ For detailed setup instructions, see [TrueNAS API Key Setup Guide](docs/truenas-
 - `backup.failure` - Backup failed
 - `prune.success` - Prune completed successfully
 - `prune.failure` - Prune failed
+- `verify.success` - Repository verification completed successfully
+- `verify.failure` - Repository verification failed (potential corruption detected)
 - `container.startup` - Container started (useful for monitoring container health)
 - `container.shutdown` - Container stopping (useful for tracking restarts/stops)
 
-**Default**: Only failures are notified (`backup.failure,prune.failure`)
+**Default**: Only failures are notified (`backup.failure,prune.failure,verify.failure`)
 
 **Tip**: Add `container.startup,container.shutdown` to track container lifecycle events
 
@@ -689,6 +745,7 @@ The test suite covers all shell scripts in the `/scripts` directory:
 - `notify.bats` - Tests notification system
 - `prune.bats` - Tests archive pruning logic
 - `restore.bats` - Tests restore operations
+- `verify.bats` - Tests repository integrity verification
 - `window-monitor.bats` - Tests window monitoring and backup termination
 
 Tests run automatically on every push and pull request via GitHub Actions.

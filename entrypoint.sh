@@ -21,6 +21,8 @@ fi
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
 RUN_ON_START="${RUN_ON_START:-false}"
 AUTO_INIT="${AUTO_INIT:-false}"
+VERIFY_ENABLED="${VERIFY_ENABLED:-false}"
+VERIFY_CRON_SCHEDULE="${VERIFY_CRON_SCHEDULE:-0 3 1 * *}"
 BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3}"
 
 export BORG_RSH
@@ -109,6 +111,12 @@ fi
 # Set up cron job
 echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
 echo "Cron job configured"
+
+# Set up verification cron job if enabled
+if [ "$VERIFY_ENABLED" = "true" ]; then
+    echo "$VERIFY_CRON_SCHEDULE /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
+    echo "Verification cron job configured"
+fi
 
 # Run backup on start if requested
 if [ "$RUN_ON_START" = "true" ]; then
