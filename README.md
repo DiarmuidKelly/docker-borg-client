@@ -240,8 +240,8 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `PRUNE_KEEP_MONTHLY` | No | `6` | Monthly archives to keep |
 | `TZ` | No | `UTC` | Timezone for cron jobs |
 | `VERIFY_ENABLED` | No | `false` | Enable scheduled repository integrity verification |
-| `VERIFY_REPO_CRON_SCHEDULE` | No | `0 3 * * 0` | Repository check schedule (default: weekly Sunday 03:00) |
-| `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | `0 3 1 * *` | Archives check schedule (default: monthly 1st at 03:00) |
+| `VERIFY_REPO_CRON_SCHEDULE` | No | - | Repository check schedule (e.g., `0 3 * * 0` for weekly Sunday 03:00) |
+| `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | - | Archives check schedule (e.g., `0 3 1 * *` for monthly 1st at 03:00) |
 | `VERIFY_LEVEL` | No | `repository` | Manual verification depth: `repository`, `archives`, or `full` |
 
 #### Notification Variables (Optional)
@@ -326,8 +326,8 @@ Scheduled `borg check` verification ensures your backup repository remains healt
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `VERIFY_ENABLED` | No | `false` | Enable scheduled verification |
-| `VERIFY_REPO_CRON_SCHEDULE` | No | `0 3 * * 0` | Repository check schedule (default: weekly Sunday 03:00) |
-| `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | `0 3 1 * *` | Archives check schedule (default: monthly 1st at 03:00) |
+| `VERIFY_REPO_CRON_SCHEDULE` | No | - | Repository check schedule (e.g., `0 3 * * 0` for weekly) |
+| `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | - | Archives check schedule (e.g., `0 3 1 * *` for monthly) |
 
 **Verification Levels:**
 
