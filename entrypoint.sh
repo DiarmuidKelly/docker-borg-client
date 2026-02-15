@@ -22,7 +22,8 @@ CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
 RUN_ON_START="${RUN_ON_START:-false}"
 AUTO_INIT="${AUTO_INIT:-false}"
 VERIFY_ENABLED="${VERIFY_ENABLED:-false}"
-VERIFY_CRON_SCHEDULE="${VERIFY_CRON_SCHEDULE:-0 3 1 * *}"
+VERIFY_REPO_CRON_SCHEDULE="${VERIFY_REPO_CRON_SCHEDULE:-0 3 * * 0}"
+VERIFY_ARCHIVES_CRON_SCHEDULE="${VERIFY_ARCHIVES_CRON_SCHEDULE:-0 3 1 * *}"
 BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3}"
 
 export BORG_RSH
@@ -112,10 +113,11 @@ fi
 echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
 echo "Cron job configured"
 
-# Set up verification cron job if enabled
+# Set up verification cron jobs if enabled
 if [ "$VERIFY_ENABLED" = "true" ]; then
-    echo "$VERIFY_CRON_SCHEDULE /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
-    echo "Verification cron job configured"
+    echo "$VERIFY_REPO_CRON_SCHEDULE VERIFY_LEVEL=repository /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
+    echo "$VERIFY_ARCHIVES_CRON_SCHEDULE VERIFY_LEVEL=archives /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
+    echo "Verification cron jobs configured (repository: weekly, archives: monthly)"
 fi
 
 # Run backup on start if requested

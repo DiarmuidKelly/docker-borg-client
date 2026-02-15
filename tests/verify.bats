@@ -257,3 +257,85 @@ EOF
     # Verify check was called second
     tail -1 "$BORG_COMMANDS_FILE" | grep -q "check"
 }
+
+# Test: Repository check skipped on archives day
+@test "repository check skipped on archives day" {
+    # Set archives day to today
+    TODAY=$(date +%d | sed 's/^0//')
+    export VERIFY_ARCHIVES_CRON_SCHEDULE="0 3 $TODAY * *"
+    export VERIFY_LEVEL="repository"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_CALLED: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Skipping repository check - archives check runs today"
+    # Borg should NOT be called
+    ! echo "$output" | grep -q "BORG_CALLED"
+}
+
+# Test: Repository check runs on non-archives day
+@test "repository check runs on non-archives day" {
+    # Set archives day to a different day
+    TODAY=$(date +%d | sed 's/^0//')
+    if [ "$TODAY" = "1" ]; then
+        ARCHIVES_DAY="2"
+    else
+        ARCHIVES_DAY="1"
+    fi
+    export VERIFY_ARCHIVES_CRON_SCHEDULE="0 3 $ARCHIVES_DAY * *"
+    export VERIFY_LEVEL="repository"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "break-lock" ]; then
+    exit 0
+elif [ "$1" = "check" ]; then
+    echo "BORG_CHECK: $@"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q "Skipping repository check"
+    echo "$output" | grep -q "BORG_CHECK:"
+}
+
+# Test: Archives check always runs regardless of day
+@test "archives check runs on any day" {
+    # Set archives day to today
+    TODAY=$(date +%d | sed 's/^0//')
+    export VERIFY_ARCHIVES_CRON_SCHEDULE="0 3 $TODAY * *"
+    export VERIFY_LEVEL="archives"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "break-lock" ]; then
+    exit 0
+elif [ "$1" = "check" ]; then
+    echo "BORG_CHECK: $@"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q "Skipping"
+    echo "$output" | grep -q "BORG_CHECK:.*--archives-only"
+}

@@ -4,6 +4,17 @@ set -e
 # Set default verification level
 VERIFY_LEVEL="${VERIFY_LEVEL:-repository}"
 
+# Skip repository check if today is archives day (avoid running both)
+if [ "$VERIFY_LEVEL" = "repository" ]; then
+    ARCHIVES_DAY=$(echo "${VERIFY_ARCHIVES_CRON_SCHEDULE:-0 3 1 * *}" | awk '{print $3}')
+    TODAY=$(date +%d | sed 's/^0//')
+
+    if [ "$ARCHIVES_DAY" = "$TODAY" ]; then
+        echo "Skipping repository check - archives check runs today"
+        exit 0
+    fi
+fi
+
 echo "========================================="
 echo "Verifying Repository Integrity"
 echo "========================================="

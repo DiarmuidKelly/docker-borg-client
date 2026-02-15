@@ -190,7 +190,8 @@ set -e
 # Simulate defaults
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
 VERIFY_ENABLED="${VERIFY_ENABLED:-false}"
-VERIFY_CRON_SCHEDULE="${VERIFY_CRON_SCHEDULE:-0 3 1 * *}"
+VERIFY_REPO_CRON_SCHEDULE="${VERIFY_REPO_CRON_SCHEDULE:-0 3 * * 0}"
+VERIFY_ARCHIVES_CRON_SCHEDULE="${VERIFY_ARCHIVES_CRON_SCHEDULE:-0 3 1 * *}"
 
 # Create crontabs directory
 mkdir -p /tmp/test-crontabs-$$
@@ -199,10 +200,11 @@ mkdir -p /tmp/test-crontabs-$$
 echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /tmp/test-crontabs-$$/root
 echo "Cron job configured"
 
-# Set up verification cron job if enabled
+# Set up verification cron jobs if enabled
 if [ "$VERIFY_ENABLED" = "true" ]; then
-    echo "$VERIFY_CRON_SCHEDULE /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /tmp/test-crontabs-$$/root
-    echo "Verification cron job configured"
+    echo "$VERIFY_REPO_CRON_SCHEDULE VERIFY_LEVEL=repository /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /tmp/test-crontabs-$$/root
+    echo "$VERIFY_ARCHIVES_CRON_SCHEDULE VERIFY_LEVEL=archives /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /tmp/test-crontabs-$$/root
+    echo "Verification cron jobs configured (repository: weekly, archives: monthly)"
 fi
 
 # Output the crontab for verification
@@ -219,8 +221,9 @@ EOF
 
     run sh "$TEST_DIR/cron-test.sh"
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "Verification cron job configured"
-    echo "$output" | grep -q "/scripts/verify.sh"
+    echo "$output" | grep -q "Verification cron jobs configured"
+    echo "$output" | grep -q "VERIFY_LEVEL=repository /scripts/verify.sh"
+    echo "$output" | grep -q "VERIFY_LEVEL=archives /scripts/verify.sh"
 }
 
 # Test: Verification cron NOT configured when VERIFY_ENABLED=false
@@ -230,28 +233,48 @@ EOF
 
     run sh "$TEST_DIR/cron-test.sh"
     [ "$status" -eq 0 ]
-    ! echo "$output" | grep -q "Verification cron job configured"
+    ! echo "$output" | grep -q "Verification cron jobs configured"
     ! echo "$output" | grep -q "/scripts/verify.sh"
 }
 
-# Test: Default verification schedule is 0 3 1 * *
-@test "default verification schedule is 0 3 1 * *" {
+# Test: Default repository verification schedule is weekly (0 3 * * 0)
+@test "default repository verification schedule is weekly" {
     create_cron_test_script
     export VERIFY_ENABLED="true"
-    unset VERIFY_CRON_SCHEDULE
 
     run sh "$TEST_DIR/cron-test.sh"
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "0 3 1 \* \* /scripts/verify.sh"
+    echo "$output" | grep -q "0 3 \* \* 0 VERIFY_LEVEL=repository /scripts/verify.sh"
 }
 
-# Test: Custom verification schedule is used
-@test "custom verification schedule is used" {
+# Test: Default archives verification schedule is monthly (0 3 1 * *)
+@test "default archives verification schedule is monthly" {
     create_cron_test_script
     export VERIFY_ENABLED="true"
-    export VERIFY_CRON_SCHEDULE="0 4 15 * *"
 
     run sh "$TEST_DIR/cron-test.sh"
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "0 4 15 \* \* /scripts/verify.sh"
+    echo "$output" | grep -q "0 3 1 \* \* VERIFY_LEVEL=archives /scripts/verify.sh"
+}
+
+# Test: Custom repository verification schedule is used
+@test "custom repository verification schedule is used" {
+    create_cron_test_script
+    export VERIFY_ENABLED="true"
+    export VERIFY_REPO_CRON_SCHEDULE="0 4 * * 1"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "0 4 \* \* 1 VERIFY_LEVEL=repository /scripts/verify.sh"
+}
+
+# Test: Custom archives verification schedule is used
+@test "custom archives verification schedule is used" {
+    create_cron_test_script
+    export VERIFY_ENABLED="true"
+    export VERIFY_ARCHIVES_CRON_SCHEDULE="0 5 15 * *"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "0 5 15 \* \* VERIFY_LEVEL=archives /scripts/verify.sh"
 }

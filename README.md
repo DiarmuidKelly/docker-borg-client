@@ -240,8 +240,9 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `PRUNE_KEEP_MONTHLY` | No | `6` | Monthly archives to keep |
 | `TZ` | No | `UTC` | Timezone for cron jobs |
 | `VERIFY_ENABLED` | No | `false` | Enable scheduled repository integrity verification |
-| `VERIFY_CRON_SCHEDULE` | No | `0 3 1 * *` | Verification cron schedule (default: 1st of month at 03:00) |
-| `VERIFY_LEVEL` | No | `repository` | Verification depth: `repository`, `archives`, or `full` |
+| `VERIFY_REPO_CRON_SCHEDULE` | No | `0 3 * * 0` | Repository check schedule (default: weekly Sunday 03:00) |
+| `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | `0 3 1 * *` | Archives check schedule (default: monthly 1st at 03:00) |
+| `VERIFY_LEVEL` | No | `repository` | Manual verification depth: `repository`, `archives`, or `full` |
 
 #### Notification Variables (Optional)
 
@@ -317,38 +318,45 @@ See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed in
 
 #### Repository Integrity Verification (Optional)
 
-Scheduled `borg check` verification ensures your backup repository remains healthy and detects corruption early.
+Scheduled `borg check` verification ensures your backup repository remains healthy and detects corruption early. When enabled, two verification jobs are configured automatically:
+
+- **Repository check** (weekly) - Fast verification of repository structure
+- **Archives check** (monthly) - Deeper verification of archive metadata integrity
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `VERIFY_ENABLED` | No | `false` | Enable scheduled verification |
-| `VERIFY_CRON_SCHEDULE` | No | `0 3 1 * *` | Cron schedule (default: 1st of month at 03:00) |
-| `VERIFY_LEVEL` | No | `repository` | Verification depth (see below) |
+| `VERIFY_REPO_CRON_SCHEDULE` | No | `0 3 * * 0` | Repository check schedule (default: weekly Sunday 03:00) |
+| `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | `0 3 1 * *` | Archives check schedule (default: monthly 1st at 03:00) |
 
 **Verification Levels:**
 
 | Level | Command | Speed | Use Case |
 |-------|---------|-------|----------|
-| `repository` | `--repository-only` | Fast | Monthly scheduled checks - verifies repository structure |
-| `archives` | `--archives-only` | Medium | Periodic checks - verifies archive metadata integrity |
+| `repository` | `--repository-only` | Fast | Weekly scheduled checks - verifies repository structure |
+| `archives` | `--archives-only` | Medium | Monthly checks - verifies archive metadata integrity |
 | `full` | `--verify-data` | Very slow | Manual spot-checks only - reads and verifies all data |
 
 **Example Configuration:**
 ```bash
 VERIFY_ENABLED=true
-VERIFY_CRON_SCHEDULE=0 3 1 * *    # 1st of month at 3am
-VERIFY_LEVEL=repository           # Fast repository check
+VERIFY_REPO_CRON_SCHEDULE=0 3 * * 0      # Weekly Sunday 3am
+VERIFY_ARCHIVES_CRON_SCHEDULE=0 3 1 * *  # Monthly 1st at 3am
 ```
 
 **Behaviour Notes:**
 - Verification breaks any existing borg lock before running - if a backup is in progress, it will be interrupted and resume from checkpoint on next scheduled run
 - Verification is read-only and does not respect backup windows (no bandwidth impact)
 - `full` level reads all repository data and is very slow on large repos - use for manual spot-checks only
+- **No double-runs**: If the archives day falls on a repo day (e.g., 1st is a Sunday), only the archives check runs - the repository check is automatically skipped
 
 **Manual Verification:**
 ```bash
 # Quick repository check
 docker compose run --rm borg-backup /scripts/verify.sh
+
+# Archives check
+docker compose run --rm -e VERIFY_LEVEL=archives borg-backup /scripts/verify.sh
 
 # Full data verification (slow - use for spot checks)
 docker compose run --rm -e VERIFY_LEVEL=full borg-backup /scripts/verify.sh
