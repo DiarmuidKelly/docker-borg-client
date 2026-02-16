@@ -1,0 +1,8 @@
+This is sample data for integration testing.
+It contains multiple lines to verify backup integrity.
+
+Line 4: Special characters: £€¥ αβγ 日本語
+Line 5: Numbers: 1234567890
+Line 6: Symbols: !@#$%^&*()
+
+End of test file.

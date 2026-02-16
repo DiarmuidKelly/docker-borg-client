@@ -38,7 +38,9 @@ case "$ACTION" in
         echo "Extracting archive: $ARCHIVE"
         echo "Destination: $RESTORE_PATH"
         echo ""
-        borg extract --list "${BORG_REPO}::${ARCHIVE}" --target "$RESTORE_PATH"
+        mkdir -p "$RESTORE_PATH"
+        cd "$RESTORE_PATH"
+        borg extract --list "${BORG_REPO}::${ARCHIVE}"
         echo ""
         echo "✅ Extraction completed!"
         ;;

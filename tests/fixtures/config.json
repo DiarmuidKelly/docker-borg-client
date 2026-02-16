@@ -1,0 +1,8 @@
+{
+  "app": "docker-borg-client",
+  "version": "test",
+  "settings": {
+    "backup_enabled": true,
+    "compression": "lz4"
+  }
+}
