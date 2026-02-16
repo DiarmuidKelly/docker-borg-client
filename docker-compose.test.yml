@@ -1,0 +1,16 @@
+services:
+  integration-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./tests/fixtures:/source:ro
+      - test-repo:/repo
+    environment:
+      BORG_REPO: /repo
+      BORG_PASSPHRASE: integration-test-passphrase
+      SOURCE_PATH: /source
+    entrypoint: ["/scripts/integration-test.sh"]
+
+volumes:
+  test-repo:
