@@ -35,7 +35,7 @@ fail() {
 
 # Clean up any previous test runs
 cleanup() {
-    rm -rf "$REPO_PATH"/* "$RESTORE_PATH" 2>/dev/null || true
+    rm -rf "${REPO_PATH:?}"/* "$RESTORE_PATH" 2>/dev/null || true
 }
 
 echo "--- Test 1: Repository Initialisation ---"
