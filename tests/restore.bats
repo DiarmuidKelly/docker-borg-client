@@ -91,6 +91,7 @@ EOF
 #!/bin/sh
 if [ "$1" = "extract" ]; then
     echo "BORG_EXTRACT: $@"
+    echo "CWD: $(pwd)"
     echo "Extracting file1.txt"
     echo "Extracting file2.txt"
     exit 0
@@ -103,7 +104,7 @@ EOF
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "Extracting archive: backup-test"
     echo "$output" | grep -q "Destination: ."
-    echo "$output" | grep -q "BORG_EXTRACT:.*--list.*${BORG_REPO}::backup-test.*--target ."
+    echo "$output" | grep -q "BORG_EXTRACT:.*--list.*${BORG_REPO}::backup-test"
     echo "$output" | grep -q "✅ Extraction completed!"
 }
 
@@ -111,27 +112,18 @@ EOF
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 if [ "$1" = "extract" ]; then
-    for arg in "$@"; do
-        case "$arg" in
-            --target) next_is_target=1 ;;
-            *)
-                if [ "$next_is_target" = "1" ]; then
-                    echo "TARGET_PATH: $arg"
-                    next_is_target=0
-                fi
-                ;;
-        esac
-    done
+    echo "BORG_EXTRACT: $@"
+    echo "CWD: $(pwd)"
     exit 0
 fi
 exit 1
 EOF
     chmod +x "$TEST_DIR/bin/borg"
 
-    run sh "$RESTORE_SCRIPT" extract backup-test /custom/restore/path
+    run sh "$RESTORE_SCRIPT" extract backup-test /tmp/custom-restore-path
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "Destination: /custom/restore/path"
-    echo "$output" | grep -q "TARGET_PATH: /custom/restore/path"
+    echo "$output" | grep -q "Destination: /tmp/custom-restore-path"
+    echo "$output" | grep -q "CWD: /tmp/custom-restore-path"
 }
 
 @test "extract action requires archive name" {
