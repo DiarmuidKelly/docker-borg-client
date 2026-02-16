@@ -87,6 +87,28 @@ jobs:
         id: version
         run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
 
+      - name: Get previous tag and changelog
+        if: steps.skip_check.outputs.skip == 'false'
+        id: changelog
+        run: |
+          # Get the most recent tag (before the one we're about to create)
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "Previous tag: $PREV_TAG"
+            COMMITS=$(git log --oneline "$PREV_TAG"..HEAD --pretty=format:"- %s")
+          else
+            echo "No previous tag found, listing recent commits"
+            COMMITS=$(git log --oneline -10 --pretty=format:"- %s")
+          fi
+
+          # Output for GitHub Actions (handle multiline)
+          {
+            echo "commits<<EOF"
+            echo "$COMMITS"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         if: steps.skip_check.outputs.skip == 'false'
         uses: softprops/action-gh-release@v1
@@ -94,30 +116,19 @@ jobs:
           name: Release v${{ steps.version.outputs.VERSION }}
           tag_name: v${{ steps.version.outputs.VERSION }}
           body: |
-            ## Docker Images
-
-            This release is available on both registries:
-
-            **GHCR:**
-            ```bash
-            docker pull ghcr.io/diarmuidkelly/docker-borg-client:${{ steps.version.outputs.VERSION }}
-            docker pull ghcr.io/diarmuidkelly/docker-borg-client:latest
-            ```
-
-            **DockerHub:**
-            ```bash
-            docker pull diarmuidk/docker-borg-client:${{ steps.version.outputs.VERSION }}
-            docker pull diarmuidk/docker-borg-client:latest
-            ```
-
             ## Changes
 
-            Merged PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}
+            ${{ steps.changelog.outputs.commits }}
 
-            See the [full changelog](https://github.com/${{ github.repository }}/compare/v${{ steps.version.outputs.VERSION }}...main) for details.
+            ## Docker Images
 
-            ---
-            🤖 Auto-released via GitHub Actions
+            ```bash
+            # GHCR
+            docker pull ghcr.io/diarmuidkelly/docker-borg-client:${{ steps.version.outputs.VERSION }}
+
+            # DockerHub
+            docker pull diarmuidk/docker-borg-client:${{ steps.version.outputs.VERSION }}
+            ```
           draft: false
           prerelease: false
         env:
