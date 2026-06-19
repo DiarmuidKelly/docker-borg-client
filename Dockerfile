@@ -3,7 +3,7 @@ FROM alpine:3
 # Install Borg, SSH client, curl for notifications, jq for JSON parsing, websocat for WebSocket API calls, then create directories
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
-    borgbackup \
+    borgbackup=1.4.4-r1 \
     openssh-client \
     curl \
     jq \
