@@ -17,8 +17,20 @@ if [ -z "$BORG_REPO" ]; then
     exit 1
 fi
 
-if [ -z "$BORG_PASSPHRASE" ]; then
-    echo "ERROR: BORG_PASSPHRASE environment variable is required"
+# Support the Docker secret convention: read the passphrase from a mounted file
+# (e.g. on an encrypted dataset) so it never lives in the orchestrator's config.
+if [ -n "${BORG_PASSPHRASE_FILE:-}" ] && [ -f "$BORG_PASSPHRASE_FILE" ]; then
+    BORG_PASSPHRASE=$(cat "$BORG_PASSPHRASE_FILE")
+    export BORG_PASSPHRASE
+fi
+
+# A passphrase must be available via one of three mechanisms. BORG_PASSCOMMAND
+# is borg-native and keeps the secret out of the environment entirely.
+if [ -z "${BORG_PASSPHRASE:-}" ] && [ -z "${BORG_PASSCOMMAND:-}" ]; then
+    echo "ERROR: a passphrase is required - set one of:"
+    echo "  BORG_PASSPHRASE       (passphrase in env var)"
+    echo "  BORG_PASSPHRASE_FILE  (path to a file containing the passphrase)"
+    echo "  BORG_PASSCOMMAND      (command that prints the passphrase, e.g. 'cat /run/secrets/passphrase')"
     exit 1
 fi
 
