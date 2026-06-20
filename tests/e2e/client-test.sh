@@ -55,9 +55,11 @@ pass "Expected files present"
 # ---------- verify excludes ----------
 
 step "Checking excluded path is absent"
-echo "$ARCHIVE_FILES" | grep -q "excluded/ignored.txt" \
-    && fail "excluded/ignored.txt found in archive — BACKUP_EXCLUDES not working" \
-    || pass "Excluded path correctly absent"
+if echo "$ARCHIVE_FILES" | grep -q "excluded/ignored.txt"; then
+    fail "excluded/ignored.txt found in archive — BACKUP_EXCLUDES not working"
+else
+    pass "Excluded path correctly absent"
+fi
 
 # ---------- verify ----------
 
