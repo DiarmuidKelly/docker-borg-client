@@ -53,7 +53,6 @@ If you're running a home server, NAS, or any system with important data, you nee
 - [Troubleshooting](#troubleshooting)
 - [Security Best Practices](#security-best-practices)
 - [Disaster Recovery](#disaster-recovery)
-- [Development](#development)
 - [Contributing](#contributing)
 - [Licence](#licence)
 - [Acknowledgements](#acknowledgements)
@@ -231,8 +230,9 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `BORG_REPO` | Yes | - | Full SSH URL to repository (e.g., `ssh://user@host:22/~/backup`) |
 | `BORG_PASSPHRASE` | Yes | - | Repository encryption passphrase |
 | `BACKUP_PATHS` | Yes | - | Colon-separated paths to back up (e.g., `/data/photos:/data/docs`) |
+| `BACKUP_EXCLUDES` | No | - | Colon-separated paths/patterns to exclude (e.g., `/data/photos/cache:/data/docs/tmp`) |
 | `BORG_RSH` | No | `ssh -i /ssh/key -o StrictHostKeyChecking=accept-new` | SSH command |
-| `CRON_SCHEDULE` | No | `0 2 * * 0` | Cron expression (default: Sunday 2am) |
+| `CRON_SCHEDULE` | No | - | Cron expression for scheduled backups (e.g., `0 2 * * 0`). Omit to run on-demand only. |
 | `RUN_ON_START` | No | `false` | Run backup immediately on container start |
 | `AUTO_INIT` | No | `false` | Automatically initialize repository if it doesn't exist |
 | `PRUNE_KEEP_DAILY` | No | `7` | Daily archives to keep |
@@ -688,79 +688,9 @@ The exported key will be stored at `/borg/config/repo-key.txt` (persisted to you
 - **2** different media types (digital + physical)
 - **1** off-site (password manager cloud sync, safe deposit box, etc.)
 
-## Development
-
-### Building
-
-Build locally:
-```bash
-docker build -t docker-borg-client .
-```
-
-Test backup:
-```bash
-docker run --rm -it \
-  -e BORG_REPO=ssh://user@host:22/./backup \
-  -e BORG_PASSPHRASE=testpass \
-  -e BACKUP_PATHS=/data \
-  -v /path/to/data:/data:ro \
-  -v ./ssh:/ssh:ro \
-  docker-borg-client /scripts/backup.sh
-```
-
-### Testing
-
-This project includes comprehensive unit tests for all shell scripts using the [bats-core](https://github.com/bats-core/bats-core) testing framework.
-
-#### Running Tests
-
-Run all tests:
-```bash
-make test
-```
-
-Run a specific test file:
-```bash
-bats tests/backup.bats
-```
-
-#### Installing bats
-
-**macOS:**
-```bash
-brew install bats-core
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install bats
-```
-
-**Other systems:**
-```bash
-git clone https://github.com/bats-core/bats-core.git
-cd bats-core
-./install.sh /usr/local
-```
-
-#### Test Coverage
-
-The test suite covers all shell scripts in the `/scripts` directory:
-- `auto-release.bats` - Tests container startup behavior
-- `backup.bats` - Tests backup execution and rate limiting
-- `check-window.bats` - Tests backup window time checking
-- `init.bats` - Tests repository initialization
-- `notify.bats` - Tests notification system
-- `prune.bats` - Tests archive pruning logic
-- `restore.bats` - Tests restore operations
-- `verify.bats` - Tests repository integrity verification
-- `window-monitor.bats` - Tests window monitoring and backup termination
-
-Tests run automatically on every push and pull request via GitHub Actions.
-
 ## Contributing
 
-Contributions welcome! Please open an issue or pull request.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing instructions, and guidelines.
 
 ## Licence
 

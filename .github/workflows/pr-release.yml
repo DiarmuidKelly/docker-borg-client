@@ -73,8 +73,8 @@ jobs:
       - name: Run auto-release script
         if: steps.skip_check.outputs.skip == 'false'
         run: |
-          chmod +x scripts/auto-release.sh
-          ./scripts/auto-release.sh ${{ steps.version_bump.outputs.bump }}
+          chmod +x .github/scripts/auto-release.sh
+          ./.github/scripts/auto-release.sh ${{ steps.version_bump.outputs.bump }}
 
       - name: Push changes and tag
         if: steps.skip_check.outputs.skip == 'false'

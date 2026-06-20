@@ -4,7 +4,7 @@
 
 setup() {
     # Path to the script under test
-    AUTO_RELEASE_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/auto-release.sh"
+    AUTO_RELEASE_SCRIPT="${BATS_TEST_DIRNAME}/../.github/scripts/auto-release.sh"
 
     # Create temporary test directory
     TEST_DIR="/tmp/test-auto-release-$$"

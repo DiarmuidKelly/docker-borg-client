@@ -1,0 +1,22 @@
+FROM alpine:3
+
+ARG BORG_VERSION=1.4.4-r1
+
+# hadolint ignore=DL3018
+RUN apk add --no-cache openssh-server borgbackup=${BORG_VERSION} && \
+    mkdir -p /run/sshd && \
+    adduser -D -s /bin/sh -h /home/borguser borguser && \
+    # Unlock account so OpenSSH permits pubkey auth (adduser -D locks by default)
+    passwd -d borguser && \
+    mkdir -p /home/borguser/.ssh /home/borguser/backups && \
+    chown borguser:borguser /home/borguser/.ssh /home/borguser/backups && \
+    chmod 700 /home/borguser/.ssh && \
+    # Pubkey only, no passwords, no penalty delays in tests
+    printf 'PubkeyAuthentication yes\nPasswordAuthentication no\nPermitEmptyPasswords no\nPerSourcePenalties no\n' \
+        >> /etc/ssh/sshd_config
+
+COPY tests/e2e/server-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 22
+CMD ["/entrypoint.sh"]
