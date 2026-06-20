@@ -1,6 +1,16 @@
 #!/bin/sh
 set -e
 
+# Set up SSH command early so it's available for both direct commands and daemon mode
+BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3}"
+export BORG_RSH
+
+# If a command is passed directly (e.g. docker run image /scripts/verify.sh),
+# skip daemon setup and run it immediately with the SSH env already set.
+if [ $# -gt 0 ]; then
+    exec "$@"
+fi
+
 # Validate required environment variables
 if [ -z "$BORG_REPO" ]; then
     echo "ERROR: BORG_REPO environment variable is required"
@@ -18,20 +28,20 @@ if [ -z "$BACKUP_PATHS" ]; then
 fi
 
 # Set defaults
-CRON_SCHEDULE="${CRON_SCHEDULE:-0 2 * * 0}"
 RUN_ON_START="${RUN_ON_START:-false}"
 AUTO_INIT="${AUTO_INIT:-false}"
 VERIFY_ENABLED="${VERIFY_ENABLED:-false}"
-BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3}"
-
-export BORG_RSH
 
 echo "========================================="
 echo "Borg Backup Container Starting"
 echo "========================================="
 echo "Repository: $BORG_REPO"
 echo "Backup paths: $BACKUP_PATHS"
-echo "Cron schedule: $CRON_SCHEDULE"
+if [ -n "${CRON_SCHEDULE:-}" ]; then
+    echo "Cron schedule: $CRON_SCHEDULE"
+else
+    echo "Cron schedule: none (on-demand only)"
+fi
 echo "Run on start: $RUN_ON_START"
 
 # Display time window configuration if set
@@ -107,17 +117,22 @@ if [ "$AUTO_INIT" = "true" ]; then
     echo "========================================="
 fi
 
-# Set up cron job
-echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
-echo "Cron job configured"
+# Set up cron job if a schedule is configured
+if [ -n "${CRON_SCHEDULE:-}" ] && [ "$CRON_SCHEDULE" != "false" ] && [ "$CRON_SCHEDULE" != "none" ]; then
+    echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
+    echo "Cron job configured: $CRON_SCHEDULE"
+else
+    : > /etc/crontabs/root
+    echo "No backup cron schedule set - running on-demand only"
+fi
 
 # Set up verification cron jobs if enabled
 if [ "$VERIFY_ENABLED" = "true" ]; then
-    if [ -n "$VERIFY_REPO_CRON_SCHEDULE" ]; then
+    if [ -n "${VERIFY_REPO_CRON_SCHEDULE:-}" ] && [ "$VERIFY_REPO_CRON_SCHEDULE" != "false" ] && [ "$VERIFY_REPO_CRON_SCHEDULE" != "none" ]; then
         echo "$VERIFY_REPO_CRON_SCHEDULE VERIFY_LEVEL=repository /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
         echo "Repository verification cron configured: $VERIFY_REPO_CRON_SCHEDULE"
     fi
-    if [ -n "$VERIFY_ARCHIVES_CRON_SCHEDULE" ]; then
+    if [ -n "${VERIFY_ARCHIVES_CRON_SCHEDULE:-}" ] && [ "$VERIFY_ARCHIVES_CRON_SCHEDULE" != "false" ] && [ "$VERIFY_ARCHIVES_CRON_SCHEDULE" != "none" ]; then
         echo "$VERIFY_ARCHIVES_CRON_SCHEDULE VERIFY_LEVEL=archives /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
         echo "Archives verification cron configured: $VERIFY_ARCHIVES_CRON_SCHEDULE"
     fi

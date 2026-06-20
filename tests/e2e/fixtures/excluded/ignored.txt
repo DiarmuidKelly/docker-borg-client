@@ -1,0 +1,1 @@
+This file must NOT appear in the backup (it is in an excluded path).

@@ -1,9 +1,11 @@
 FROM alpine:3
 
+ARG BORG_VERSION=1.4.4-r1
+
 # Install Borg, SSH client, curl for notifications, jq for JSON parsing, websocat for WebSocket API calls, then create directories
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
-    borgbackup \
+    borgbackup=${BORG_VERSION} \
     openssh-client \
     curl \
     jq \

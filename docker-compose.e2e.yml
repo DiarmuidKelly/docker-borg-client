@@ -1,0 +1,37 @@
+x-borg-version: &borg-version "1.4.4-r1"
+
+services:
+  borg-server:
+    build:
+      context: .
+      dockerfile: tests/e2e/Dockerfile.testserver
+      args:
+        BORG_VERSION: *borg-version
+    volumes:
+      - ./tests/e2e/ssh/id_ed25519.pub:/tmp/authorized_keys:ro
+
+  borg-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BORG_VERSION: *borg-version
+    depends_on:
+      - borg-server
+    environment:
+      BORG_REPO: "ssh://borguser@borg-server:22/~/backups"
+      BORG_PASSPHRASE: "e2e-test-passphrase"
+      BACKUP_PATHS: "/source"
+      BACKUP_EXCLUDES: "/source/excluded"
+      BORG_RSH: "ssh -i /ssh/key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    volumes:
+      - ./tests/e2e/ssh/id_ed25519:/ssh/key:ro
+      - ./tests/e2e/fixtures:/source:ro
+      - ./tests/e2e/client-test.sh:/client-test.sh:ro
+      - e2e-borg-cache:/borg/cache
+      - e2e-borg-config:/borg/config
+    entrypoint: ["/bin/sh", "/client-test.sh"]
+
+volumes:
+  e2e-borg-cache:
+  e2e-borg-config:

@@ -55,6 +55,15 @@ fi
 # Convert colon-separated paths to space-separated for borg
 PATHS=$(echo "$BACKUP_PATHS" | tr ':' ' ')
 
+# Convert colon-separated excludes to --exclude args
+EXCLUDE_ARGS=""
+if [ -n "${BACKUP_EXCLUDES:-}" ]; then
+    for excl in $(echo "$BACKUP_EXCLUDES" | tr ':' ' '); do
+        EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude $excl"
+    done
+    echo "Excludes: $BACKUP_EXCLUDES"
+fi
+
 # Run backup with error handling
 echo "Creating backup archive..."
 
@@ -65,6 +74,7 @@ borg create \
     --progress \
     --compression lz4 \
     $BORG_RATE_LIMIT \
+    $EXCLUDE_ARGS \
     "${BORG_REPO}::${ARCHIVE_NAME}" \
     $PATHS &
 
