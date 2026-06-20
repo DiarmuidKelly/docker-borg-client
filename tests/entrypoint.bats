@@ -27,6 +27,8 @@ teardown() {
     rm -rf "$BORG_REPO"
     unset BORG_REPO
     unset BORG_PASSPHRASE
+    unset BORG_PASSPHRASE_FILE
+    unset BORG_PASSCOMMAND
     unset BACKUP_PATHS
     unset BORG_CACHE_DIR
     unset AUTO_INIT
@@ -307,4 +309,94 @@ EOF
     run sh "$TEST_DIR/cron-test.sh"
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "0 5 15 \* \* VERIFY_LEVEL=archives /scripts/verify.sh"
+}
+
+# Helper to create passphrase-resolution test script (mirrors entrypoint.sh logic)
+create_passphrase_test_script() {
+    cat > "$TEST_DIR/passphrase-test.sh" << 'EOF'
+#!/bin/sh
+set -e
+
+# Support the Docker secret convention: read the passphrase from a mounted file
+if [ -n "${BORG_PASSPHRASE_FILE:-}" ] && [ -f "$BORG_PASSPHRASE_FILE" ]; then
+    BORG_PASSPHRASE=$(cat "$BORG_PASSPHRASE_FILE")
+    export BORG_PASSPHRASE
+fi
+
+# A passphrase must be available via one of three mechanisms
+if [ -z "${BORG_PASSPHRASE:-}" ] && [ -z "${BORG_PASSCOMMAND:-}" ]; then
+    echo "ERROR: a passphrase is required"
+    exit 1
+fi
+
+echo "RESOLVED_PASSPHRASE=${BORG_PASSPHRASE:-}"
+echo "PASSPHRASE_OK"
+EOF
+    chmod +x "$TEST_DIR/passphrase-test.sh"
+}
+
+# Test: BORG_PASSPHRASE env var is accepted (existing behaviour)
+@test "accepts BORG_PASSPHRASE env var" {
+    create_passphrase_test_script
+    export BORG_PASSPHRASE="env-passphrase"
+    unset BORG_PASSPHRASE_FILE
+    unset BORG_PASSCOMMAND
+
+    run sh "$TEST_DIR/passphrase-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "PASSPHRASE_OK"
+    echo "$output" | grep -q "RESOLVED_PASSPHRASE=env-passphrase"
+}
+
+# Test: BORG_PASSPHRASE_FILE is read from disk
+@test "reads passphrase from BORG_PASSPHRASE_FILE" {
+    create_passphrase_test_script
+    unset BORG_PASSPHRASE
+    unset BORG_PASSCOMMAND
+    printf 'file-passphrase' > "$TEST_DIR/passphrase.secret"
+    export BORG_PASSPHRASE_FILE="$TEST_DIR/passphrase.secret"
+
+    run sh "$TEST_DIR/passphrase-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "PASSPHRASE_OK"
+    echo "$output" | grep -q "RESOLVED_PASSPHRASE=file-passphrase"
+}
+
+# Test: BORG_PASSCOMMAND alone satisfies validation (no passphrase in env)
+@test "accepts BORG_PASSCOMMAND without BORG_PASSPHRASE" {
+    create_passphrase_test_script
+    unset BORG_PASSPHRASE
+    unset BORG_PASSPHRASE_FILE
+    export BORG_PASSCOMMAND="cat /run/secrets/passphrase"
+
+    run sh "$TEST_DIR/passphrase-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "PASSPHRASE_OK"
+    # Passphrase is intentionally NOT in the env - borg resolves it via the command
+    echo "$output" | grep -q "RESOLVED_PASSPHRASE=$"
+}
+
+# Test: fails when no passphrase mechanism is provided
+@test "fails when no passphrase mechanism is set" {
+    create_passphrase_test_script
+    unset BORG_PASSPHRASE
+    unset BORG_PASSPHRASE_FILE
+    unset BORG_PASSCOMMAND
+
+    run sh "$TEST_DIR/passphrase-test.sh"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "a passphrase is required"
+}
+
+# Test: BORG_PASSPHRASE_FILE takes precedence over BORG_PASSPHRASE env var
+@test "BORG_PASSPHRASE_FILE overrides BORG_PASSPHRASE env var" {
+    create_passphrase_test_script
+    export BORG_PASSPHRASE="env-passphrase"
+    printf 'file-passphrase' > "$TEST_DIR/passphrase.secret"
+    export BORG_PASSPHRASE_FILE="$TEST_DIR/passphrase.secret"
+    unset BORG_PASSCOMMAND
+
+    run sh "$TEST_DIR/passphrase-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "RESOLVED_PASSPHRASE=file-passphrase"
 }

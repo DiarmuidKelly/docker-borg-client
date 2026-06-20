@@ -5,8 +5,17 @@ set -e
 BORG_RSH="${BORG_RSH:-ssh -i /ssh/key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ConnectionAttempts=3}"
 export BORG_RSH
 
+# Support the Docker secret convention: read the passphrase from a mounted file
+# (e.g. on an encrypted dataset) so it never lives in the orchestrator's config.
+# Done before the direct-command passthrough so manual ops (docker run image
+# /scripts/backup.sh) also benefit from the file-based passphrase.
+if [ -n "${BORG_PASSPHRASE_FILE:-}" ] && [ -f "$BORG_PASSPHRASE_FILE" ]; then
+    BORG_PASSPHRASE=$(cat "$BORG_PASSPHRASE_FILE")
+    export BORG_PASSPHRASE
+fi
+
 # If a command is passed directly (e.g. docker run image /scripts/verify.sh),
-# skip daemon setup and run it immediately with the SSH env already set.
+# skip daemon setup and run it immediately with the SSH/passphrase env already set.
 if [ $# -gt 0 ]; then
     exec "$@"
 fi
@@ -17,8 +26,13 @@ if [ -z "$BORG_REPO" ]; then
     exit 1
 fi
 
-if [ -z "$BORG_PASSPHRASE" ]; then
-    echo "ERROR: BORG_PASSPHRASE environment variable is required"
+# A passphrase must be available via one of three mechanisms. BORG_PASSCOMMAND
+# is borg-native and keeps the secret out of the environment entirely.
+if [ -z "${BORG_PASSPHRASE:-}" ] && [ -z "${BORG_PASSCOMMAND:-}" ]; then
+    echo "ERROR: a passphrase is required - set one of:"
+    echo "  BORG_PASSPHRASE       (passphrase in env var)"
+    echo "  BORG_PASSPHRASE_FILE  (path to a file containing the passphrase)"
+    echo "  BORG_PASSCOMMAND      (command that prints the passphrase, e.g. 'cat /run/secrets/passphrase')"
     exit 1
 fi
 
