@@ -15,6 +15,8 @@ user-visible changes to `[Unreleased]` as part of your PR.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-02
+
 ### Fixed
 
 - **Job events were silently discarded.** `notify.sh` pushed every event to the
@@ -279,7 +281,8 @@ Entries for 0.5.0 and earlier are not reconstructed here; see the
 [release history](https://github.com/DiarmuidKelly/docker-borg-client/releases)
 and `git log`.
 
-[Unreleased]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.6.2...v0.7.0
