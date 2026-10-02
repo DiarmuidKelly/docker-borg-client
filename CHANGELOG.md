@@ -43,6 +43,11 @@ user-visible changes to `[Unreleased]` as part of your PR.
   Borg 1.x has no `::latest` pseudo-archive, so it is resolved client-side via
   `borg list --last 1`.
 - **Working `borg mount`**: the `borgbackup-fuse` package is now installed.
+- This changelog, plus tooling to keep it honest: `auto-release.sh` promotes the
+  `[Unreleased]` section to the released version at tag time, and a pre-merge CI
+  check (`.github/scripts/check-changelog.sh`) fails a PR that adds no entry.
+  The check is skipped for PRs that skip a release (`docs:`, `chore:`, `style:`,
+  `test:`, `[SKIP]`) or carry the `no-changelog` label.
 - New notification events `restore.success` and `restore.failure`.
 - The container prints its version, Borg version and licence on start (#40).
 - `/restore` directory in the image, for use as a restore mount point.

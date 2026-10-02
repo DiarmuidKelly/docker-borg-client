@@ -7,6 +7,14 @@ Add user-visible changes to the `[Unreleased]` section of
 here: this is backup software, so "prune now runs in case X" or "this command
 now refuses Y" needs to reach users who pin an image tag.
 
+**This is enforced.** CI fails a PR that adds no `[Unreleased]` entry. Editing an
+older section or a link reference does not count. The check is skipped when the
+PR produces no release (a `docs:`, `chore:`, `style:`, `test:` or `[SKIP]` title)
+or when the PR carries the `no-changelog` label. On release, `auto-release.sh`
+rewrites the `[Unreleased]` heading to the new version with the date, updates the
+comparison links, and leaves a fresh empty `[Unreleased]` behind — so entries are
+only ever written in one place.
+
 ## Development Setup
 
 ### Building
@@ -75,8 +83,9 @@ bats tests/backup.bats
 
 | File | Tests |
 |------|-------|
-| `auto-release.bats` | Container startup behaviour |
+| `auto-release.bats` | Version bumping and tagging |
 | `backup.bats` | Backup execution, rate limiting, excludes |
+| `changelog.bats` | Changelog pre-merge check and release promotion |
 | `check-window.bats` | Backup window time checking |
 | `entrypoint.bats` | Lock handling, cron setup |
 | `init.bats` | Repository initialisation |

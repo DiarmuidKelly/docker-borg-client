@@ -9,6 +9,46 @@ permissions:
   issues: write
 
 jobs:
+  check-changelog:
+    name: Changelog Entry
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Need the base branch to compare the [Unreleased] section against
+          fetch-depth: 0
+
+      - name: Decide whether a changelog entry is required
+        id: required
+        # PR titles and labels are untrusted input, so they are passed through
+        # env rather than interpolated into the script body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          # No release means no changelog entry to make. Mirrors the skip rules
+          # in pr-release.yml, plus an explicit opt-out label.
+          if [[ "$PR_TITLE" =~ ^\[(SKIP|skip)\] ]] ||
+             [[ "$PR_TITLE" =~ ^docs(\(.+\))?: ]] ||
+             [[ "$PR_TITLE" =~ ^style(\(.+\))?: ]] ||
+             [[ "$PR_TITLE" =~ ^test(\(.+\))?: ]] ||
+             { [[ "$PR_TITLE" =~ ^chore(\(.+\))?: ]] && [[ ! "$PR_TITLE" =~ deps ]]; } ||
+             [[ "$PR_LABELS" == *'"skip-release"'* ]] ||
+             [[ "$PR_LABELS" == *'"no-changelog"'* ]]; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️  No changelog entry required for this PR"
+          else
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check CHANGELOG [Unreleased] entry
+        if: steps.required.outputs.required == 'true'
+        run: |
+          bash .github/scripts/check-changelog.sh \
+            "origin/${{ github.event.pull_request.base.ref }}"
+
   validate-pr-title:
     name: Validate PR Title Format
     runs-on: ubuntu-latest

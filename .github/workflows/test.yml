@@ -16,6 +16,7 @@ jobs:
         test-file:
           - auto-release
           - backup
+          - changelog
           - check-window
           - entrypoint
           - init
