@@ -45,10 +45,18 @@ fi
 RUN_ON_START="${RUN_ON_START:-false}"
 AUTO_INIT="${AUTO_INIT:-false}"
 VERIFY_ENABLED="${VERIFY_ENABLED:-false}"
+RESTORE_DRILL_ENABLED="${RESTORE_DRILL_ENABLED:-false}"
+PREFLIGHT_ENABLED="${PREFLIGHT_ENABLED:-true}"
 
 echo "========================================="
 echo "Borg Backup Container Starting"
 echo "========================================="
+echo "Version: $(cat /VERSION 2>/dev/null || echo unknown)"
+echo "Borg: $(borg --version 2>/dev/null || echo unknown)"
+echo "Licence: GPL-3.0 (full text at /LICENCE)"
+echo "Started: $(date)"
+echo "Timezone: ${TZ:-UTC}"
+echo "-----------------------------------------"
 echo "Repository: $BORG_REPO"
 echo "Backup paths: $BACKUP_PATHS"
 if [ -n "${CRON_SCHEDULE:-}" ]; then
@@ -131,6 +139,12 @@ if [ "$AUTO_INIT" = "true" ]; then
     echo "========================================="
 fi
 
+# Preflight runs after AUTO_INIT so a freshly created repository reports as
+# reachable rather than missing. Report-only unless PREFLIGHT_STRICT=true.
+if [ "$PREFLIGHT_ENABLED" = "true" ]; then
+    /scripts/preflight.sh || exit 1
+fi
+
 # Set up cron job if a schedule is configured
 if [ -n "${CRON_SCHEDULE:-}" ] && [ "$CRON_SCHEDULE" != "false" ] && [ "$CRON_SCHEDULE" != "none" ]; then
     echo "$CRON_SCHEDULE /scripts/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
@@ -149,6 +163,17 @@ if [ "$VERIFY_ENABLED" = "true" ]; then
     if [ -n "${VERIFY_ARCHIVES_CRON_SCHEDULE:-}" ] && [ "$VERIFY_ARCHIVES_CRON_SCHEDULE" != "false" ] && [ "$VERIFY_ARCHIVES_CRON_SCHEDULE" != "none" ]; then
         echo "$VERIFY_ARCHIVES_CRON_SCHEDULE VERIFY_LEVEL=archives /scripts/verify.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
         echo "Archives verification cron configured: $VERIFY_ARCHIVES_CRON_SCHEDULE"
+    fi
+fi
+
+# Set up the restore drill cron if enabled. borg check proves the repository is
+# intact; only an actual restore proves the data is recoverable.
+if [ "$RESTORE_DRILL_ENABLED" = "true" ]; then
+    if [ -n "${RESTORE_DRILL_CRON_SCHEDULE:-}" ] && [ "$RESTORE_DRILL_CRON_SCHEDULE" != "false" ] && [ "$RESTORE_DRILL_CRON_SCHEDULE" != "none" ]; then
+        echo "$RESTORE_DRILL_CRON_SCHEDULE /scripts/restore-drill.sh >> /proc/1/fd/1 2>&1" >> /etc/crontabs/root
+        echo "Restore drill cron configured: $RESTORE_DRILL_CRON_SCHEDULE"
+    else
+        echo "RESTORE_DRILL_ENABLED=true but RESTORE_DRILL_CRON_SCHEDULE is not set - drills will only run on demand"
     fi
 fi
 

@@ -212,11 +212,181 @@ if [ "$VERIFY_ENABLED" = "true" ]; then
     fi
 fi
 
+# Set up restore drill cron if enabled
+if [ "${RESTORE_DRILL_ENABLED:-false}" = "true" ]; then
+    if [ -n "$RESTORE_DRILL_CRON_SCHEDULE" ]; then
+        echo "$RESTORE_DRILL_CRON_SCHEDULE /scripts/restore-drill.sh >> /proc/1/fd/1 2>&1" >> /tmp/test-crontabs-$$/root
+        echo "Restore drill cron configured: $RESTORE_DRILL_CRON_SCHEDULE"
+    else
+        echo "RESTORE_DRILL_ENABLED=true but RESTORE_DRILL_CRON_SCHEDULE is not set - drills will only run on demand"
+    fi
+fi
+
 # Output the crontab for verification
 cat /tmp/test-crontabs-$$/root
 rm -rf /tmp/test-crontabs-$$
 EOF
     chmod +x "$TEST_DIR/cron-test.sh"
+}
+
+# Runs the REAL entrypoint.sh with absolute paths redirected into TEST_DIR, so
+# the banner, preflight call and cron wiring are covered as actually shipped
+# rather than re-simulated (which can silently drift from the real script).
+create_real_entrypoint_test() {
+    mkdir -p "$TEST_DIR/crontabs" "$TEST_DIR/scripts"
+    printf '9.9.9\n' > "$TEST_DIR/VERSION"
+
+    for s in notify.sh backup.sh init.sh preflight.sh; do
+        cat > "$TEST_DIR/scripts/$s" << EOF
+#!/bin/sh
+echo "CALLED: $s \$*"
+exit 0
+EOF
+        chmod +x "$TEST_DIR/scripts/$s"
+    done
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+case "$1" in
+  list) exit 0 ;;
+  --version) echo "borg 1.4.4-test" ;;
+  key) echo "key exported" ;;
+esac
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    # crond would block in the foreground; make it return instead
+    cat > "$TEST_DIR/bin/crond" << 'EOF'
+#!/bin/sh
+echo "CROND STARTED: $*"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/crond"
+
+    sed -e "s|/scripts/|$TEST_DIR/scripts/|g" \
+        -e "s|/etc/crontabs/root|$TEST_DIR/crontabs/root|g" \
+        -e "s|/borg/config|$TEST_DIR/borg/config|g" \
+        -e "s|cat /VERSION|cat $TEST_DIR/VERSION|g" \
+        "${BATS_TEST_DIRNAME}/../entrypoint.sh" > "$TEST_DIR/entrypoint-test.sh"
+    chmod +x "$TEST_DIR/entrypoint-test.sh"
+}
+
+# ---------- startup banner (issue #40) ----------
+
+@test "startup banner prints version, borg version and licence" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Version: 9.9.9"
+    echo "$output" | grep -q "Borg: borg 1.4.4-test"
+    echo "$output" | grep -q "Licence: GPL-3.0"
+    echo "$output" | grep -q "Started:"
+}
+
+# ---------- preflight wiring ----------
+
+@test "preflight runs on startup by default" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "CALLED: preflight.sh"
+}
+
+@test "preflight can be disabled with PREFLIGHT_ENABLED=false" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+    export PREFLIGHT_ENABLED="false"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q "CALLED: preflight.sh"
+    unset PREFLIGHT_ENABLED
+}
+
+@test "container does not start when preflight exits non-zero" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+
+    cat > "$TEST_DIR/scripts/preflight.sh" << 'EOF'
+#!/bin/sh
+echo "PREFLIGHT_STRICT=true - refusing to start"
+exit 1
+EOF
+    chmod +x "$TEST_DIR/scripts/preflight.sh"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 1 ]
+    ! echo "$output" | grep -q "CROND STARTED"
+}
+
+# ---------- restore drill cron on the real entrypoint ----------
+
+@test "real entrypoint configures the restore drill cron when enabled" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+    export RESTORE_DRILL_ENABLED="true"
+    export RESTORE_DRILL_CRON_SCHEDULE="0 4 1 1,4,7,10 *"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Restore drill cron configured: 0 4 1 1,4,7,10 \*"
+    grep -q "restore-drill.sh" "$TEST_DIR/crontabs/root"
+    unset RESTORE_DRILL_ENABLED RESTORE_DRILL_CRON_SCHEDULE
+}
+
+@test "real entrypoint warns when drills are enabled without a schedule" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+    export RESTORE_DRILL_ENABLED="true"
+    unset RESTORE_DRILL_CRON_SCHEDULE
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "drills will only run on demand"
+    ! grep -q "restore-drill.sh" "$TEST_DIR/crontabs/root"
+    unset RESTORE_DRILL_ENABLED
+}
+
+@test "real entrypoint does not configure a drill cron by default" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+    unset RESTORE_DRILL_ENABLED
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q "Restore drill cron configured"
+    ! grep -q "restore-drill.sh" "$TEST_DIR/crontabs/root"
+}
+
+# ---------- drill cron via the simulated script ----------
+
+@test "restore drill cron configured when enabled with a schedule" {
+    create_cron_test_script
+    export RESTORE_DRILL_ENABLED="true"
+    export RESTORE_DRILL_CRON_SCHEDULE="0 4 1 1,4,7,10 *"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Restore drill cron configured"
+    echo "$output" | grep -q "/scripts/restore-drill.sh"
+    unset RESTORE_DRILL_ENABLED RESTORE_DRILL_CRON_SCHEDULE
+}
+
+@test "restore drill cron NOT configured when RESTORE_DRILL_ENABLED is false" {
+    create_cron_test_script
+    export RESTORE_DRILL_ENABLED="false"
+    export RESTORE_DRILL_CRON_SCHEDULE="0 4 1 1,4,7,10 *"
+
+    run sh "$TEST_DIR/cron-test.sh"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q "Restore drill cron configured"
+    ! echo "$output" | grep -q "restore-drill.sh"
+    unset RESTORE_DRILL_ENABLED RESTORE_DRILL_CRON_SCHEDULE
 }
 
 # Test: Both verification crons configured when both schedules set

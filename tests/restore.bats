@@ -13,12 +13,20 @@ setup() {
     # Set up environment
     export BORG_REPO="/tmp/test-repo-$$"
     export PATH="$TEST_DIR/bin:$PATH"
+
+    # borg is mocked here, so the real FUSE probe is irrelevant - skip it so
+    # mount tests behave the same on hosts with and without /dev/fuse
+    export RESTORE_SKIP_FUSE_CHECK=true
+
+    # Keep the destination guard deterministic
+    unset BACKUP_PATHS
 }
 
 teardown() {
     # Clean up
     rm -rf "$TEST_DIR"
     unset BORG_REPO
+    unset RESTORE_SKIP_FUSE_CHECK
 }
 
 # Test: List action (default)
@@ -281,6 +289,316 @@ EOF
     run sh "$RESTORE_SCRIPT" list
     [ "$status" -eq 2 ]
     echo "$output" | grep -q "ERROR: Repository not found"
+}
+
+# Test: latest resolves the newest archive name
+@test "latest prints the newest archive name" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "list" ]; then
+    echo "backup-2026-10-02_01-00-00"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" latest
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "backup-2026-10-02_01-00-00"
+}
+
+@test "latest uses --last 1 to resolve the archive" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "ARGS: $@"
+echo "backup-newest"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" latest
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q -- "--last 1"
+}
+
+@test "latest fails clearly when repository has no archives" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" latest
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "no archives to resolve 'latest'"
+}
+
+# Test: archive name "latest" is resolved for other actions
+@test "info resolves the literal name 'latest'" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "list" ]; then
+    echo "backup-resolved"
+    exit 0
+fi
+if [ "$1" = "info" ]; then
+    echo "BORG_INFO: $2"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" info latest
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "BORG_INFO: ${BORG_REPO}::backup-resolved"
+}
+
+# Test: files action lists archive contents
+@test "files lists paths inside an archive" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "list" ]; then
+    echo "data/important.txt"
+    echo "data/sub/nested.txt"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" files backup-test
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Files in archive: backup-test"
+    echo "$output" | grep -q "data/important.txt"
+    echo "$output" | grep -q "data/sub/nested.txt"
+}
+
+@test "files filters on a pattern when given" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "list" ]; then
+    echo "data/important.txt"
+    echo "data/sub/nested.txt"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" files backup-test important
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Filtering on: important"
+    echo "$output" | grep -q "data/important.txt"
+    ! echo "$output" | grep -q "nested.txt"
+}
+
+@test "files action requires archive name" {
+    run sh "$RESTORE_SCRIPT" files
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "ERROR: Archive name required for files action"
+}
+
+# Test: selective extract passes inner paths through to borg
+@test "extract passes specific inner paths to borg" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_EXTRACT: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test "$TEST_DIR/out" data/important.txt data/other.txt
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Paths: data/important.txt data/other.txt"
+    echo "$output" | grep -q "BORG_EXTRACT:.*backup-test data/important.txt data/other.txt"
+}
+
+# Test: dry-run verifies without writing
+@test "dry-run uses --dry-run and writes nothing" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_ARGS: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" dry-run backup-test
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "No files will be written"
+    echo "$output" | grep -q "BORG_ARGS:.*--dry-run.*--list.*${BORG_REPO}::backup-test"
+    echo "$output" | grep -q "✅ Dry-run completed"
+}
+
+@test "dry-run accepts specific inner paths" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_ARGS: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" dry-run backup-test data/important.txt
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Paths: data/important.txt"
+    echo "$output" | grep -q "BORG_ARGS:.*backup-test data/important.txt"
+}
+
+@test "dry-run action requires archive name" {
+    run sh "$RESTORE_SCRIPT" dry-run
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "ERROR: Archive name required for dry-run action"
+}
+
+# Test: fail-safe - never restore over the live source data
+@test "extract refuses to write to /" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test /
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "refusing to extract to '/'"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract refuses a destination inside a backup source path" {
+    export BACKUP_PATHS="/data/photos:/data/docs"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test /data/photos/restore-here
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "refusing to extract into '/data/photos/restore-here'"
+    echo "$output" | grep -q "inside backup source '/data/photos'"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract allows a destination outside all backup source paths" {
+    export BACKUP_PATHS="/data/photos:/data/docs"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_EXTRACT: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test "$TEST_DIR/out"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "✅ Extraction completed!"
+}
+
+@test "extract warns when the destination is not empty" {
+    mkdir -p "$TEST_DIR/out"
+    touch "$TEST_DIR/out/pre-existing.txt"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test "$TEST_DIR/out"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "WARNING: destination .* is not empty"
+}
+
+# Test: mount preflight fails clearly without FUSE bindings
+@test "mount reports a clear error when FUSE bindings are missing" {
+    unset RESTORE_SKIP_FUSE_CHECK
+
+    # Shim python3 so the pyfuse3/llfuse import probe always fails
+    cat > "$TEST_DIR/bin/python3" << 'EOF'
+#!/bin/sh
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/python3"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" mount latest /mnt/test
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "no FUSE bindings"
+    echo "$output" | grep -q "borgbackup-fuse"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+# Test: umount action
+@test "umount unmounts the given path" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_UMOUNT: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" umount /mnt/backup
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Unmounting: /mnt/backup"
+    echo "$output" | grep -q "BORG_UMOUNT: umount /mnt/backup"
+    echo "$output" | grep -q "✅ Unmounted!"
+}
+
+@test "umount action requires a mount path" {
+    run sh "$RESTORE_SCRIPT" umount
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "ERROR: Mount path required for umount action"
+}
+
+# Test: key-export action
+@test "key-export exports the repository key to the default path" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_KEY: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" key-export
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "BORG_KEY: key export ${BORG_REPO} /borg/config/repo-key.txt"
+    echo "$output" | grep -q "Store this with your passphrase"
+}
+
+@test "key-export accepts a custom output path" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_KEY: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" key-export /tmp/my-key.txt
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "BORG_KEY: key export ${BORG_REPO} /tmp/my-key.txt"
+}
+
+# Test: usage lists the new recovery actions
+@test "usage documents the recovery actions" {
+    run sh "$RESTORE_SCRIPT" invalid
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "latest"
+    echo "$output" | grep -q "files"
+    echo "$output" | grep -q "dry-run"
+    echo "$output" | grep -q "umount"
+    echo "$output" | grep -q "drill"
+    echo "$output" | grep -q "key-export"
+    echo "$output" | grep -q "may be given as 'latest'"
 }
 
 @test "handles borg extract failure" {
