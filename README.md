@@ -228,7 +228,9 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BORG_REPO` | Yes | - | Full SSH URL to repository (e.g., `ssh://user@host:22/~/backup`) |
-| `BORG_PASSPHRASE` | Yes | - | Repository encryption passphrase |
+| `BORG_PASSPHRASE` | Yes* | - | Repository encryption passphrase. *One of `BORG_PASSPHRASE`, `BORG_PASSPHRASE_FILE`, or `BORG_PASSCOMMAND` is required. |
+| `BORG_PASSPHRASE_FILE` | No | - | Path to a file containing the passphrase (read at startup). Mount from an encrypted dataset to keep the secret off the apps pool. |
+| `BORG_PASSCOMMAND` | No | - | Command that prints the passphrase (e.g. `cat /run/secrets/passphrase`). Borg-native; keeps the secret out of the environment entirely. |
 | `BACKUP_PATHS` | Yes | - | Colon-separated paths to back up (e.g., `/data/photos:/data/docs`) |
 | `BACKUP_EXCLUDES` | No | - | Colon-separated paths/patterns to exclude (e.g., `/data/photos/cache:/data/docs/tmp`) |
 | `BORG_RSH` | No | `ssh -i /ssh/key -o StrictHostKeyChecking=accept-new` | SSH command |
@@ -598,6 +600,30 @@ docker compose run --rm borg-backup /scripts/restore.sh check
 - Deleting `/borg/cache` or `/borg/config` - Can corrupt repository metadata
 
 **Recommendation**: Test your restore process regularly to ensure backups are working correctly.
+
+### Protecting the Passphrase (TrueNAS encrypted datasets)
+
+> **If you back up an *encrypted* dataset, read this.** A naive setup can quietly weaken its protection.
+
+Borg encrypts data **client-side**: it trusts the client and distrusts the backup server. Recovery needs two things — the repository key (stored encrypted *inside* the repo) and the **passphrase** (which must live only on the client). An attacker who compromises only the backup server gets ciphertext they cannot read.
+
+The risk on TrueNAS is **where the passphrase lives**. The TrueNAS Apps pool (and the `ix-apps` dataset) is **not encrypted**. If you set `BORG_PASSPHRASE` as a plain environment variable, that value is stored in the app's configuration on that unencrypted pool. An attacker who reads the unencrypted apps pool then has the passphrase — and combined with access to the backup server (often trivially reachable from the same machine via the SSH key) they can decrypt the backup of your *encrypted* dataset. In effect, the encrypted dataset is only as protected as the unencrypted pool.
+
+**Mitigations** (any one closes the gap; later options are stronger):
+
+1. **Keep the SSH key on an encrypted dataset.** The key is already a mounted file (`/ssh/key`), never an env var. Mount it from an encrypted dataset so the backup server is unreachable while that dataset is locked.
+
+2. **Supply the passphrase from a file on an encrypted dataset** instead of an env var. Use either:
+   - **`env_file`** pointing at a file on an encrypted dataset (keeps the plaintext out of the app config — note the value still becomes a normal container env var, visible via `docker inspect`), or
+   - **`BORG_PASSPHRASE_FILE=/run/secrets/passphrase`** — this container reads the file at startup.
+
+3. **`BORG_PASSCOMMAND` (strongest).** Borg-native; the passphrase is never stored as an environment variable at all:
+   ```bash
+   BORG_PASSCOMMAND=cat /run/secrets/passphrase
+   ```
+   Mount `/run/secrets/passphrase` from an encrypted dataset. While the dataset is locked, the passphrase is unavailable and the backup cannot be decrypted.
+
+**Threat model summary** — backing up an encrypted dataset with the passphrase on the unencrypted pool adds a new path for an attacker: instead of needing the dataset open (or its key), they need only the unencrypted pool **plus** server access. Keeping the passphrase (and SSH key) on encrypted storage removes that path.
 
 ## Disaster Recovery
 

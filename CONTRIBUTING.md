@@ -24,6 +24,15 @@ docker run --rm -it \
 
 ## Testing
 
+### Linting
+
+All shell scripts are checked with [shellcheck](https://www.shellcheck.net/) (the same check CI runs):
+
+```bash
+make lint     # shellcheck every *.sh
+make check    # lint + unit tests - the quick pre-push gate
+```
+
 ### Unit Tests
 
 All shell scripts are covered by [bats-core](https://github.com/bats-core/bats-core) unit tests.

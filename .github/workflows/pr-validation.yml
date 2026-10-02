@@ -38,11 +38,8 @@ jobs:
             sudo apt-get update && sudo apt-get install -y shellcheck
           fi
 
-          # Find and check all shell scripts
-          find . -name "*.sh" -type f | while read -r script; do
-            echo "Checking $script..."
-            shellcheck "$script" || exit 1
-          done
+          # Single source of truth: same lint target developers run locally
+          make lint
 
       - name: Validate VERSION file
         run: |

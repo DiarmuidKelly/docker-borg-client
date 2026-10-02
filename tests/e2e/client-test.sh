@@ -77,4 +77,31 @@ grep -q "This file must be present" /tmp/restore/source/important.txt \
     || fail "Restored content does not match original"
 pass "Restore verified"
 
+# ---------- passphrase from file (issue #53) ----------
+# Drive a real backup through the entrypoint with the passphrase sourced from a
+# mounted file instead of BORG_PASSPHRASE, proving the resolution path works
+# against the real server (not just the unit-test snippet).
+
+step "Backup with BORG_PASSPHRASE_FILE (passphrase env unset)"
+printf '%s' "$BORG_PASSPHRASE" > /tmp/pass.secret
+COUNT_BEFORE=$(borg list "$REPO" | wc -l)
+env -u BORG_PASSPHRASE BORG_PASSPHRASE_FILE=/tmp/pass.secret \
+    /entrypoint.sh /scripts/backup.sh
+COUNT_AFTER=$(borg list "$REPO" | wc -l)
+[ "$COUNT_AFTER" -gt "$COUNT_BEFORE" ] \
+    || fail "BORG_PASSPHRASE_FILE backup did not create a new archive"
+pass "Passphrase-from-file backup succeeded"
+
+# ---------- passphrase from command (issue #53) ----------
+# BORG_PASSCOMMAND is borg-native: the passphrase never enters the environment.
+
+step "Backup with BORG_PASSCOMMAND (passphrase env unset)"
+COUNT_BEFORE=$(borg list "$REPO" | wc -l)
+env -u BORG_PASSPHRASE BORG_PASSCOMMAND="cat /tmp/pass.secret" \
+    /entrypoint.sh /scripts/backup.sh
+COUNT_AFTER=$(borg list "$REPO" | wc -l)
+[ "$COUNT_AFTER" -gt "$COUNT_BEFORE" ] \
+    || fail "BORG_PASSCOMMAND backup did not create a new archive"
+pass "Passphrase-from-command backup succeeded"
+
 step "All E2E tests passed"
