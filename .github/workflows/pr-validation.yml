@@ -2,13 +2,60 @@ name: PR Title Validation
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    # labeled/unlabeled matter: the changelog check tells authors to apply a
+    # 'no-changelog' label, which can only clear a failed run if adding it
+    # re-triggers the workflow.
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   pull-requests: write
   issues: write
 
 jobs:
+  check-changelog:
+    name: Changelog Entry
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Need the base branch to compare the [Unreleased] section against
+          fetch-depth: 0
+
+      - name: Decide whether a changelog entry is required
+        id: required
+        # PR titles and labels are untrusted input, so they are passed through
+        # env rather than interpolated into the script body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          # An entry is required whenever a release will be produced. These
+          # rules must match the skip rules in pr-release.yml exactly: if this
+          # check exempts a PR that pr-release still releases, auto-release.sh
+          # promotes an empty [Unreleased] and publishes a version with no
+          # entries - the rot this check exists to prevent.
+          #
+          # pr-release.yml skips: [SKIP]/[skip] prefix, docs:, chore: without
+          # "deps", and the skip-release label. Nothing else.
+          if [[ "$PR_TITLE" =~ ^\[(SKIP|skip)\] ]] ||
+             [[ "$PR_TITLE" =~ ^docs: ]] ||
+             { [[ "$PR_TITLE" =~ ^chore: ]] && [[ ! "$PR_TITLE" =~ deps ]]; } ||
+             [[ "$PR_LABELS" == *'"skip-release"'* ]] ||
+             [[ "$PR_LABELS" == *'"no-changelog"'* ]]; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️  No changelog entry required for this PR"
+          else
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check CHANGELOG [Unreleased] entry
+        if: steps.required.outputs.required == 'true'
+        run: |
+          bash .github/scripts/check-changelog.sh \
+            "origin/${{ github.event.pull_request.base.ref }}"
+
   validate-pr-title:
     name: Validate PR Title Format
     runs-on: ubuntu-latest

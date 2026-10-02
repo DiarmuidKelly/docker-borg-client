@@ -13,7 +13,18 @@ services:
       # Borg cache and config (persistent)
       - borg-cache:/borg/cache
       - borg-config:/borg/config
+      # Destination for restored files - keep it OUTSIDE the backup sources
+      # above, so a restore can never overwrite the data it came from.
+      # - ./restore:/restore
     restart: unless-stopped
+    # Uncomment to allow `restore.sh mount` to browse archives via FUSE.
+    # Not needed for backups or for `restore.sh extract`.
+    # devices:
+    #   - "/dev/fuse"
+    # cap_add:
+    #   - "SYS_ADMIN"
+    # security_opt:
+    #   - "apparmor=unconfined"
 
 volumes:
   borg-cache:

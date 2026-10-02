@@ -2,6 +2,19 @@
 
 Contributions are welcome. Please open an issue to discuss significant changes before submitting a pull request.
 
+Add user-visible changes to the `[Unreleased]` section of
+[CHANGELOG.md](CHANGELOG.md) as part of your PR. Behavioural changes matter most
+here: this is backup software, so "prune now runs in case X" or "this command
+now refuses Y" needs to reach users who pin an image tag.
+
+**This is enforced.** CI fails a PR that adds no `[Unreleased]` entry. Editing an
+older section or a link reference does not count. The check is skipped when the
+PR produces no release (a `docs:`, `chore:`, `style:`, `test:` or `[SKIP]` title)
+or when the PR carries the `no-changelog` label. On release, `auto-release.sh`
+rewrites the `[Unreleased]` heading to the new version with the date, updates the
+comparison links, and leaves a fresh empty `[Unreleased]` behind — so entries are
+only ever written in one place.
+
 ## Development Setup
 
 ### Building
@@ -70,16 +83,22 @@ bats tests/backup.bats
 
 | File | Tests |
 |------|-------|
-| `auto-release.bats` | Container startup behaviour |
+| `auto-release.bats` | Version bumping and tagging |
 | `backup.bats` | Backup execution, rate limiting, excludes |
+| `changelog.bats` | Changelog pre-merge check and release promotion |
 | `check-window.bats` | Backup window time checking |
 | `entrypoint.bats` | Lock handling, cron setup |
 | `init.bats` | Repository initialisation |
 | `notify.bats` | Notification system |
+| `preflight.bats` | Startup recovery-readiness checks |
 | `prune.bats` | Archive pruning logic |
-| `restore.bats` | Restore operations |
+| `restore.bats` | Restore operations and destination fail-safes |
+| `restore-drill.bats` | Automated restore drills |
 | `verify.bats` | Repository integrity verification |
 | `window-monitor.bats` | Window monitoring and backup termination |
+
+Note: `make test-alpine` installs `jq`, which the restore-drill tests need for
+parsing `borg list --json-lines` output.
 
 ### End-to-End Tests
 
@@ -95,6 +114,9 @@ This will:
 3. Run a backup with `AUTO_INIT=true` and `RUN_ON_START=true`
 4. Verify the archive exists and excluded paths are absent
 5. Restore files and assert they match the originals
-6. Tear everything down
+6. Exercise the recovery flow: preflight, `latest`, `files`, `dry-run`,
+   selective extract, the destination fail-safes, a passing restore drill and a
+   failing one
+7. Tear everything down
 
 Unit tests run on every push and pull request via GitHub Actions. E2E tests run as part of the release workflow.

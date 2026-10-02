@@ -16,12 +16,15 @@ jobs:
         test-file:
           - auto-release
           - backup
+          - changelog
           - check-window
           - entrypoint
           - init
           - notify
+          - preflight
           - prune
           - restore
+          - restore-drill
           - verify
           - window-monitor
 
@@ -35,8 +38,9 @@ jobs:
         bats-version: 1.5.0
 
     - name: Run ${{ matrix.test-file }} tests
+      # Must gate the build: with continue-on-error the suite reported green
+      # even when tests failed, so a regression could merge unnoticed.
       run: bats tests/${{ matrix.test-file }}.bats
-      continue-on-error: true  # Allow workflow to continue even if some tests fail
 
     - name: Upload test results
       if: always()

@@ -11,7 +11,7 @@ test:
 # Run unit tests inside an Alpine container (mirrors CI environment)
 test-alpine:
 	@docker run --rm -v "$(PWD):/workspace" -w /workspace alpine:3 sh -c '\
-		apk add --no-cache bash bats coreutils git && \
+		apk add --no-cache bash bats coreutils git jq && \
 		bats tests/*.bats'
 
 # Run full E2E tests: real borg-server + client, backup → verify → restore

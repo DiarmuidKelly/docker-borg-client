@@ -167,17 +167,22 @@ echo "--- Test 7: backup.sh - Create Second Backup ---"
 # Small delay to ensure different timestamp
 sleep 2
 
+NEWEST_BEFORE=$(borg list --last 1 --format '{archive}{NL}' "$BORG_REPO" 2>/dev/null | head -1)
+
 if /scripts/backup.sh 2>&1; then
     pass "Second backup.sh completed"
 else
     fail "Second backup.sh failed"
 fi
 
-ARCHIVE_COUNT=$(borg list "$BORG_REPO" 2>/dev/null | wc -l)
-if [ "$ARCHIVE_COUNT" -ge 2 ]; then
-    pass "Two archives exist (count: $ARCHIVE_COUNT)"
+# Archive counts cannot be asserted here: backup.sh runs prune on success, and
+# this suite sets PRUNE_KEEP_DAILY=1, so the older archive is removed. Assert a
+# NEW archive was created instead.
+NEWEST_AFTER=$(borg list --last 1 --format '{archive}{NL}' "$BORG_REPO" 2>/dev/null | head -1)
+if [ -n "$NEWEST_AFTER" ] && [ "$NEWEST_AFTER" != "$NEWEST_BEFORE" ]; then
+    pass "Second backup created a new archive ($NEWEST_AFTER)"
 else
-    fail "Expected at least 2 archives, found $ARCHIVE_COUNT"
+    fail "Second backup did not create a new archive (before: $NEWEST_BEFORE, after: $NEWEST_AFTER)"
 fi
 echo ""
 
@@ -232,6 +237,70 @@ if /scripts/restore.sh check 2>&1; then
     pass "restore.sh check passed"
 else
     fail "restore.sh check failed"
+fi
+echo ""
+
+# =========================================
+# Test 11: restore.sh drill - Prove Recoverability
+# =========================================
+echo "--- Test 11: restore-drill.sh - Automated Restore Drill ---"
+
+if RESTORE_DRILL_SAMPLE_COUNT=2 /scripts/restore-drill.sh > /tmp/drill.out 2>&1; then
+    pass "restore drill passed"
+else
+    fail "restore drill failed"
+    cat /tmp/drill.out
+fi
+
+if grep -q "matches live source" /tmp/drill.out; then
+    pass "Drill compared restored files against the live source"
+else
+    fail "Drill did not byte-compare any restored file"
+    cat /tmp/drill.out
+fi
+
+# A file that is not in the archive must fail the drill loudly
+if RESTORE_DRILL_PATHS="not/in/the/archive.txt" /scripts/restore-drill.sh > /tmp/drill-fail.out 2>&1; then
+    fail "Drill reported success for a file absent from the archive"
+else
+    pass "Drill fails when a file cannot be restored"
+fi
+echo ""
+
+# =========================================
+# Test 12: restore.sh fail-safes
+# =========================================
+echo "--- Test 12: restore.sh - Destination Fail-Safes ---"
+
+if /scripts/restore.sh extract "$ARCHIVE_NAME" / > /tmp/guard.out 2>&1; then
+    fail "extract to / was permitted"
+else
+    if grep -q "refusing to extract at '/'" /tmp/guard.out; then
+        pass "extract refuses to overwrite live data at /"
+    else
+        fail "extract failed for the wrong reason"
+        cat /tmp/guard.out
+    fi
+fi
+echo ""
+
+# =========================================
+# Test 13: preflight.sh - Recovery Readiness
+# =========================================
+echo "--- Test 13: preflight.sh - Recovery Readiness Report ---"
+
+if /scripts/preflight.sh > /tmp/preflight.out 2>&1; then
+    pass "preflight.sh completed"
+else
+    fail "preflight.sh failed"
+    cat /tmp/preflight.out
+fi
+
+if grep -q "Repository reachable and passphrase verified" /tmp/preflight.out; then
+    pass "preflight verified repository access and passphrase"
+else
+    fail "preflight did not verify repository access"
+    cat /tmp/preflight.out
 fi
 echo ""
 
