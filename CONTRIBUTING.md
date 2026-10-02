@@ -2,6 +2,11 @@
 
 Contributions are welcome. Please open an issue to discuss significant changes before submitting a pull request.
 
+Add user-visible changes to the `[Unreleased]` section of
+[CHANGELOG.md](CHANGELOG.md) as part of your PR. Behavioural changes matter most
+here: this is backup software, so "prune now runs in case X" or "this command
+now refuses Y" needs to reach users who pin an image tag.
+
 ## Development Setup
 
 ### Building

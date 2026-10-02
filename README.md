@@ -685,6 +685,7 @@ volumes:
 
 - **TrueNAS API Key Setup**: [docs/truenas-api-key-setup.md](docs/truenas-api-key-setup.md) - Generate API keys for notifications
 - **Recovery Flow and Fail-Safes**: [docs/20261002-recovery-flow.md](docs/20261002-recovery-flow.md) - Design notes behind the restore tooling, drills and preflight
+- **Changelog**: [CHANGELOG.md](CHANGELOG.md) - Notable changes per release. **Read the "Changed" entries before upgrading.**
 
 ## Cron Schedule Examples
 
