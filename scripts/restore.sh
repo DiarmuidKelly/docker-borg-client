@@ -31,32 +31,17 @@ resolve_archive() {
 }
 
 # Fail-safe: never let a restore write over the live data it was taken from.
-# Borg stores paths without a leading slash, so extracting at / recreates the
-# original absolute tree and would overwrite the source. Refuse that outright,
-# and refuse any destination inside a configured backup path.
-assert_safe_destination() {
-    dest="$1"
+# The path checks live in lib-paths.sh because the restore drill needs the same
+# guard before it deletes its target directory. Sourced relative to this script
+# so it resolves both at /scripts in the image and from a git checkout.
+# shellcheck source=scripts/lib-paths.sh
+. "$(dirname "$0")/lib-paths.sh"
 
-    if [ -z "$dest" ] || [ "$dest" = "/" ]; then
-        echo "ERROR: refusing to extract to '/' - this would overwrite live data" >&2
-        echo "       Pass an empty restore directory instead, e.g. /restore" >&2
-        exit 1
-    fi
+check_destination() {
+    assert_safe_destination "$1" "extract" || exit 1
 
-    for src in $(echo "${BACKUP_PATHS:-}" | tr ':' ' '); do
-        [ -n "$src" ] || continue
-        case "$dest/" in
-            "$src"/*)
-                echo "ERROR: refusing to extract into '$dest'" >&2
-                echo "       It is inside backup source '$src' - restoring there" >&2
-                echo "       would overwrite the data you are trying to recover." >&2
-                exit 1
-                ;;
-        esac
-    done
-
-    if [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
-        echo "WARNING: destination '$dest' is not empty - existing files may be overwritten"
+    if [ -d "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; then
+        echo "WARNING: destination '$1' is not empty - existing files may be overwritten"
         echo ""
     fi
 }
@@ -128,7 +113,17 @@ case "$ACTION" in
         fi
         echo ""
         if [ -n "$PATTERN" ]; then
-            borg list --format '{path}{NL}' "${BORG_REPO}::${ARCHIVE}" | grep -- "$PATTERN"
+            # grep exits 1 when nothing matches. Under set -e that would make
+            # "this file is not in the archive" - a useful, correct answer -
+            # indistinguishable from a repository failure mid-recovery.
+            MATCHES=$(borg list --format '{path}{NL}' "${BORG_REPO}::${ARCHIVE}" | grep -- "$PATTERN" || true)
+            if [ -z "$MATCHES" ]; then
+                echo "No paths in $ARCHIVE match '$PATTERN'."
+                echo "Archive paths have no leading slash: a source of /data/docs"
+                echo "appears as data/docs. Run without a pattern to list everything."
+            else
+                printf '%s\n' "$MATCHES"
+            fi
         else
             borg list --format '{path}{NL}' "${BORG_REPO}::${ARCHIVE}"
         fi
@@ -141,7 +136,7 @@ case "$ACTION" in
             exit 1
         fi
         ARCHIVE=$(resolve_archive "$ARCHIVE")
-        assert_safe_destination "$RESTORE_PATH"
+        check_destination "$RESTORE_PATH"
         # Anything after the destination narrows the restore to those paths.
         # Guard the shift: `shift N` with N > $# is fatal in dash.
         if [ $# -gt 3 ]; then shift 3; else set --; fi

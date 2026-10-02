@@ -462,7 +462,7 @@ EOF
 
     run sh "$RESTORE_SCRIPT" extract backup-test /
     [ "$status" -eq 1 ]
-    echo "$output" | grep -q "refusing to extract to '/'"
+    echo "$output" | grep -q "refusing to extract at '/'"
     ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
 }
 
@@ -478,7 +478,7 @@ EOF
 
     run sh "$RESTORE_SCRIPT" extract backup-test /data/photos/restore-here
     [ "$status" -eq 1 ]
-    echo "$output" | grep -q "refusing to extract into '/data/photos/restore-here'"
+    echo "$output" | grep -q "refusing to extract to '/data/photos/restore-here'"
     echo "$output" | grep -q "inside backup source '/data/photos'"
     ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
 }
@@ -496,6 +496,120 @@ EOF
     run sh "$RESTORE_SCRIPT" extract backup-test "$TEST_DIR/out"
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "✅ Extraction completed!"
+}
+
+# Regression: the guard only rejected the literal "/" and the empty string, so
+# the default destination of "." slipped through. The image sets no WORKDIR, so
+# `docker exec ... /scripts/restore.sh extract latest` ran with cwd=/ and
+# recreated the archive tree over the live filesystem.
+@test "extract refuses the default destination when the working directory is /" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh -c "cd / && sh '$RESTORE_SCRIPT' extract backup-test"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "refusing to extract at '/'"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract refuses a relative destination that resolves to /" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh -c "cd /tmp && sh '$RESTORE_SCRIPT' extract backup-test .."
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "refusing to extract at '/'"
+    echo "$output" | grep -q "resolves to '/'"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract refuses a path with .. segments that lands in a backup source" {
+    export BACKUP_PATHS="/data/photos"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test /data/photos/sub/../other
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "inside backup source '/data/photos'"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract guard copes with a trailing slash in BACKUP_PATHS" {
+    export BACKUP_PATHS="/data/photos/"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test /data/photos/restore
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "inside backup source"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract refuses the backup source directory itself" {
+    export BACKUP_PATHS="/data/photos"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test /data/photos
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "inside backup source"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "extract refuses everything when BACKUP_PATHS is /" {
+    export BACKUP_PATHS="/"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_SHOULD_NOT_RUN"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" extract backup-test "$TEST_DIR/out"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "BACKUP_PATHS includes '/'"
+    ! echo "$output" | grep -q "BORG_SHOULD_NOT_RUN"
+}
+
+@test "files reports no matches without failing" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "list" ]; then
+    echo "data/important.txt"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$RESTORE_SCRIPT" files backup-test nothing-matches-this
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "No paths in backup-test match 'nothing-matches-this'"
+    echo "$output" | grep -q "no leading slash"
 }
 
 @test "extract warns when the destination is not empty" {

@@ -275,7 +275,7 @@ echo "--- Test 12: restore.sh - Destination Fail-Safes ---"
 if /scripts/restore.sh extract "$ARCHIVE_NAME" / > /tmp/guard.out 2>&1; then
     fail "extract to / was permitted"
 else
-    if grep -q "refusing to extract to '/'" /tmp/guard.out; then
+    if grep -q "refusing to extract at '/'" /tmp/guard.out; then
         pass "extract refuses to overwrite live data at /"
     else
         fail "extract failed for the wrong reason"

@@ -50,7 +50,25 @@ CHANGELOG_UPDATED=false
 
 if [ -f CHANGELOG.md ]; then
   if grep -q '^## \[Unreleased\]' CHANGELOG.md; then
-    sed -i "s|^## \[Unreleased\]|## [Unreleased]\n\n## [${NEW_VERSION}] - ${RELEASE_DATE}|" CHANGELOG.md
+    # If nothing was recorded, say so explicitly rather than publishing a
+    # version heading with nothing under it. The pre-merge gate in
+    # pr-validation.yml should prevent this, but a release that slips through
+    # its skip rules should still produce an honest section.
+    UNRELEASED_BODY=$(awk '
+      /^## \[Unreleased\]/ { in_section = 1; next }
+      in_section && /^## \[/ { exit }
+      in_section {
+        if ($0 ~ /^[[:space:]]*$/) next
+        if ($0 ~ /^###/) next
+        print
+      }' CHANGELOG.md)
+
+    if [ -z "$UNRELEASED_BODY" ]; then
+      echo "⚠️  [Unreleased] is empty - recording that explicitly for $NEW_VERSION"
+      sed -i "s|^## \[Unreleased\]|## [Unreleased]\n\n## [${NEW_VERSION}] - ${RELEASE_DATE}\n\n_No changelog entries were recorded for this release._|" CHANGELOG.md
+    else
+      sed -i "s|^## \[Unreleased\]|## [Unreleased]\n\n## [${NEW_VERSION}] - ${RELEASE_DATE}|" CHANGELOG.md
+    fi
 
     # Re-point the Unreleased compare link at the new tag and add one for the
     # release. The base URL is taken from the existing link so the repository

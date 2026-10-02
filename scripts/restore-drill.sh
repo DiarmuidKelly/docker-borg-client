@@ -13,12 +13,38 @@ set -e
 # Restoring everything is impractical on a multi-terabyte repo, so the drill
 # samples a handful of files and rotates which ones it picks each run.
 
+# Sourced relative to this script so it resolves both at /scripts in the image
+# and from a git checkout
+# shellcheck source=scripts/lib-paths.sh
+. "$(dirname "$0")/lib-paths.sh"
+
 ARCHIVE_REQUEST="${RESTORE_DRILL_ARCHIVE:-latest}"
 SAMPLE_COUNT="${RESTORE_DRILL_SAMPLE_COUNT:-3}"
 MAX_FILE_BYTES="${RESTORE_DRILL_MAX_FILE_BYTES:-104857600}"
-TARGET="${RESTORE_DRILL_TARGET:-/tmp/restore-drill}"
+TARGET_ROOT="${RESTORE_DRILL_TARGET:-/tmp/restore-drill}"
 KEEP="${RESTORE_DRILL_KEEP:-false}"
-LOCK_WAIT="${RESTORE_DRILL_LOCK_WAIT:-300}"
+# Short by design. Issue #42 was a long blocking lock wait that outlived the
+# container; a quarterly drill gains nothing by waiting, because skipping and
+# running on the next schedule costs nothing.
+LOCK_WAIT="${RESTORE_DRILL_LOCK_WAIT:-60}"
+STATE_FILE="${RESTORE_DRILL_STATE_FILE:-/borg/config/last-restore-drill}"
+
+# Validate numeric inputs before they reach arithmetic. A non-numeric value used
+# to survive `[ "$x" -lt 1 ]` (which errors rather than returning true) and then
+# divide by zero in awk, surfacing as a CRITICAL "drill failed" alert instead of
+# a configuration error.
+validate_uint() {
+    case "$2" in
+        ''|*[!0-9]*)
+            echo "ERROR: $1 must be a non-negative integer (got '$2')" >&2
+            exit 2
+            ;;
+    esac
+}
+validate_uint RESTORE_DRILL_SAMPLE_COUNT "$SAMPLE_COUNT"
+validate_uint RESTORE_DRILL_MAX_FILE_BYTES "$MAX_FILE_BYTES"
+validate_uint RESTORE_DRILL_LOCK_WAIT "$LOCK_WAIT"
+[ "$SAMPLE_COUNT" -ge 1 ] || SAMPLE_COUNT=1
 
 START_TIME=$(date +%s)
 
@@ -29,6 +55,21 @@ echo "Repository: $BORG_REPO"
 echo "Archive requested: $ARCHIVE_REQUEST"
 echo "Sample size: $SAMPLE_COUNT file(s)"
 echo "Max file size: ${MAX_FILE_BYTES} bytes"
+echo ""
+
+# The drill deletes its working directory, so the destination gets the same
+# guard as a manual restore: never / and never inside a backup source.
+if ! assert_safe_destination "$TARGET_ROOT" "run a restore drill"; then
+    echo "" >&2
+    echo "Set RESTORE_DRILL_TARGET to a scratch path outside your backup" >&2
+    echo "sources, e.g. /tmp/restore-drill (the default)." >&2
+    exit 2
+fi
+
+# Work inside a uniquely named subdirectory that this run creates, so the
+# operator's configured path is never itself the target of rm -rf. Pointing
+# RESTORE_DRILL_TARGET at a directory holding other files is therefore safe.
+TARGET="${TARGET_ROOT}/run-$$"
 echo "Restore target: $TARGET"
 echo ""
 
@@ -48,7 +89,11 @@ cleanup() {
     if [ "$KEEP" = "true" ]; then
         echo "Restored files kept at: $TARGET (RESTORE_DRILL_KEEP=true)"
     else
-        rm -rf "$TARGET"
+        # Only ever the per-run subdirectory created above, never TARGET_ROOT
+        [ -n "${TARGET:-}" ] && rm -rf "$TARGET"
+        # Tidy the parent if this run left it empty, but never remove a path
+        # that holds anything else
+        rmdir "$TARGET_ROOT" 2>/dev/null || true
     fi
 }
 
@@ -58,11 +103,6 @@ CANDIDATES=$(mktemp)
 SAMPLE=$(mktemp)
 ERR_FILE=$(mktemp)
 trap 'rm -f "$CANDIDATES" "$CANDIDATES.raw" "$SAMPLE" "$ERR_FILE"; cleanup' EXIT
-
-# Guard against a zero/negative sample size reaching the awk division below
-if [ "$SAMPLE_COUNT" -lt 1 ] 2>/dev/null; then
-    SAMPLE_COUNT=1
-fi
 
 echo "--- Resolving archive ---"
 # Keep stderr out of the captured value: borg writes notices such as the SSH
@@ -204,14 +244,27 @@ echo "$EXTRACT_OUT"
 
 if [ $EXTRACT_EXIT -ne 0 ]; then
     skip_if_locked "$EXTRACT_OUT"
-    echo ""
-    echo "FAILED: borg extract exited $EXTRACT_EXIT"
-    DURATION=$(( $(date +%s) - START_TIME ))
-    /scripts/notify.sh "restore.failure" "CRITICAL" \
-        "Borg Restore Drill Failed" \
-        "Archive: ${ARCHIVE}, borg extract exit code: ${EXTRACT_EXIT}, Duration: ${DURATION}s"
-    echo "========================================="
-    exit "$EXTRACT_EXIT"
+
+    # The image sets BORG_EXIT_CODES=modern: 1 and 100-127 are warnings, 2-99
+    # are errors. Warnings are routinely benign here - unsupported xattrs or
+    # ACLs on the restore target, or an include pattern that matched nothing -
+    # and must not short-circuit verification, which is the real test. A drill
+    # whose files all came back byte-identically should not raise CRITICAL.
+    if [ $EXTRACT_EXIT -eq 1 ] || { [ $EXTRACT_EXIT -ge 100 ] && [ $EXTRACT_EXIT -le 127 ]; }; then
+        echo ""
+        echo "NOTE: borg extract reported warnings (exit $EXTRACT_EXIT)."
+        echo "Continuing to verification - the restored files decide the result."
+        EXTRACT_WARNED=$EXTRACT_EXIT
+    else
+        echo ""
+        echo "FAILED: borg extract exited $EXTRACT_EXIT"
+        DURATION=$(( $(date +%s) - START_TIME ))
+        /scripts/notify.sh "restore.failure" "CRITICAL" \
+            "Borg Restore Drill Failed" \
+            "Archive: ${ARCHIVE}, borg extract exit code: ${EXTRACT_EXIT}, Duration: ${DURATION}s"
+        echo "========================================="
+        exit "$EXTRACT_EXIT"
+    fi
 fi
 echo ""
 
@@ -278,6 +331,9 @@ echo "Restored (source changed/absent): $CHANGED"
 echo "Failed:           $FAILED"
 echo "Bytes restored:   $RESTORED_BYTES"
 echo "Duration:         ${DURATION}s"
+if [ -n "${EXTRACT_WARNED:-}" ]; then
+    echo "borg warnings:    yes (extract exit ${EXTRACT_WARNED})"
+fi
 echo "========================================="
 
 if [ "$FAILED" -gt 0 ]; then
@@ -289,6 +345,17 @@ if [ "$FAILED" -gt 0 ]; then
 fi
 
 echo "✅ Restore drill passed - $SAMPLE_TOTAL file(s) recovered successfully"
+
+# Record the success so a drill that keeps skipping (a stale lock, a schedule
+# that never fires) cannot hide behind a quarterly cadence. preflight.sh reports
+# the age of this timestamp on every container start.
+if mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null; then
+    printf '%s %s\n' "$(date +%s)" "$ARCHIVE" > "$STATE_FILE" 2>/dev/null \
+        || echo "NOTE: could not record drill success to $STATE_FILE"
+else
+    echo "NOTE: could not create $(dirname "$STATE_FILE") to record drill success"
+fi
+
 /scripts/notify.sh "restore.success" "INFO" \
     "Borg Restore Drill Successful" \
     "Archive: ${ARCHIVE}, ${SAMPLE_TOTAL} file(s) restored (${MATCHED} byte-identical to source), Duration: ${DURATION}s"

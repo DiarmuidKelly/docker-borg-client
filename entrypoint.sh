@@ -9,9 +9,19 @@ export BORG_RSH
 # (e.g. on an encrypted dataset) so it never lives in the orchestrator's config.
 # Done before the direct-command passthrough so manual ops (docker run image
 # /scripts/backup.sh) also benefit from the file-based passphrase.
-if [ -n "${BORG_PASSPHRASE_FILE:-}" ] && [ -f "$BORG_PASSPHRASE_FILE" ]; then
-    BORG_PASSPHRASE=$(cat "$BORG_PASSPHRASE_FILE")
-    export BORG_PASSPHRASE
+if [ -n "${BORG_PASSPHRASE_FILE:-}" ]; then
+    if [ -f "$BORG_PASSPHRASE_FILE" ]; then
+        BORG_PASSPHRASE=$(cat "$BORG_PASSPHRASE_FILE")
+        export BORG_PASSPHRASE
+    else
+        # Fail loudly rather than falling back. Silently ignoring an unreadable
+        # file means a forgotten or mistyped secret mount keeps working from a
+        # leftover BORG_PASSPHRASE - defeating the point of using a file - or
+        # fails later with a confusing "no passphrase" error.
+        echo "ERROR: BORG_PASSPHRASE_FILE is set to '$BORG_PASSPHRASE_FILE' but that file does not exist"
+        echo "       Check the secret is mounted at that path inside the container."
+        exit 1
+    fi
 fi
 
 # If a command is passed directly (e.g. docker run image /scripts/verify.sh),

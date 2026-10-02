@@ -77,6 +77,12 @@ EOF
 
     # Redirect /scripts/ to the mock directory, matching the other suites
     sed "s|/scripts/|$TEST_DIR/scripts/|g" "$DRILL_SCRIPT" > "$TEST_DIR/drill.sh"
+
+    # The drill sources lib-paths.sh relative to its own location
+    cp "${BATS_TEST_DIRNAME}/../scripts/lib-paths.sh" "$TEST_DIR/lib-paths.sh"
+
+    # Drill state is written to /borg/config by default; keep tests out of it
+    export RESTORE_DRILL_STATE_FILE="$TEST_DIR/last-drill"
 }
 
 teardown() {
@@ -85,6 +91,7 @@ teardown() {
     unset MOCK_EXTRACT_FAIL MOCK_EXTRACT_MSG MOCK_EXTRACT_SKIP MOCK_CORRUPT
     unset RESTORE_DRILL_PATHS RESTORE_DRILL_TARGET RESTORE_DRILL_SAMPLE_COUNT
     unset RESTORE_DRILL_ARCHIVE RESTORE_DRILL_KEEP RESTORE_DRILL_MAX_FILE_BYTES
+    unset RESTORE_DRILL_STATE_FILE RESTORE_DRILL_LOCK_WAIT
 }
 
 # Write a --json-lines fixture describing an archive's contents
@@ -289,7 +296,187 @@ EOF
     run sh "$TEST_DIR/drill.sh"
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "Restored files kept at"
-    [ -f "${RESTORE_DRILL_TARGET}/${REL_A}" ]
+    # Each run works in its own subdirectory under the configured target
+    [ -n "$(find "$RESTORE_DRILL_TARGET" -name 'a.txt' -type f 2>/dev/null)" ]
+}
+
+# ---------- the drill deletes its target, so the target needs a guard ----------
+# Regression: RESTORE_DRILL_TARGET was rm -rf'd unvalidated, so pointing it at a
+# mounted restore directory (as the README suggests) wiped it every drill, and
+# pointing it inside BACKUP_PATHS deleted live source data on a cron schedule.
+
+@test "drill refuses to run with its target set to /" {
+    export RESTORE_DRILL_TARGET="/"
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "refusing to run a restore drill at '/'"
+}
+
+@test "drill refuses a target inside a backup source" {
+    export BACKUP_PATHS="/data/photos"
+    export RESTORE_DRILL_TARGET="/data/photos/drill"
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "inside backup source '/data/photos'"
+    echo "$output" | grep -q "scratch path outside your backup"
+    unset BACKUP_PATHS
+}
+
+@test "drill never deletes the configured target itself, only its own subdirectory" {
+    export RESTORE_DRILL_PATHS="$REL_A"
+    mkdir -p "$RESTORE_DRILL_TARGET"
+    printf 'do not delete me\n' > "$RESTORE_DRILL_TARGET/pre-existing.txt"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 0 ]
+    # The operator's file and directory survive
+    [ -f "$RESTORE_DRILL_TARGET/pre-existing.txt" ]
+    grep -q "do not delete me" "$RESTORE_DRILL_TARGET/pre-existing.txt"
+    # But the drill's own run directory is gone
+    [ -z "$(find "$RESTORE_DRILL_TARGET" -maxdepth 1 -name 'run-*' 2>/dev/null)" ]
+}
+
+# ---------- borg warnings are not failures ----------
+# With BORG_EXIT_CODES=modern, 1 and 100-127 are warnings. Unsupported xattrs or
+# ACLs on the restore target produce them routinely; treating them as failures
+# fired CRITICAL alerts for drills whose files all came back intact.
+
+@test "drill treats a borg warning exit as a warning and still verifies" {
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+cmd="$1"; shift
+if [ "$cmd" = "extract" ]; then
+    skip_next=0
+    for a in "$@"; do
+        if [ "$skip_next" = 1 ]; then skip_next=0; continue; fi
+        case "$a" in
+            --lock-wait) skip_next=1; continue ;;
+            --*) continue ;;
+            *::*) continue ;;
+        esac
+        mkdir -p "$(dirname "$a")"
+        cp "/$a" "$a" 2>/dev/null || printf 'x\n' > "$a"
+    done
+    echo "setting xattr failed, unsupported on this filesystem" >&2
+    exit 105
+fi
+printf '%s\n' "$MOCK_ARCHIVE"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "borg extract reported warnings (exit 105)"
+    echo "$output" | grep -q "PASS: ${REL_A}"
+    echo "$output" | grep -q "borg warnings:    yes (extract exit 105)"
+    echo "$output" | grep -q "NOTIFY: restore.success INFO"
+    ! echo "$output" | grep -q "NOTIFY: restore.failure"
+}
+
+@test "drill still fails on a warning exit when a file is genuinely missing" {
+    export RESTORE_DRILL_PATHS="$REL_A"
+    export MOCK_EXTRACT_FAIL=101
+    export MOCK_EXTRACT_MSG="Include pattern 'x' never matched."
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "reported warnings (exit 101)"
+    echo "$output" | grep -q "FAIL: ${REL_A} - not present after extract"
+    echo "$output" | grep -q "NOTIFY: restore.failure CRITICAL"
+}
+
+@test "drill fails hard on a borg error exit" {
+    export RESTORE_DRILL_PATHS="$REL_A"
+    export MOCK_EXTRACT_FAIL=2
+    export MOCK_EXTRACT_MSG="Data integrity error"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "FAILED: borg extract exited 2"
+}
+
+# ---------- configuration validation ----------
+
+@test "drill rejects a non-numeric sample count as a configuration error" {
+    export RESTORE_DRILL_SAMPLE_COUNT="three"
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "RESTORE_DRILL_SAMPLE_COUNT must be a non-negative integer"
+    # Must not masquerade as a failed drill
+    ! echo "$output" | grep -q "NOTIFY: restore.failure"
+}
+
+@test "drill rejects a non-numeric max file size" {
+    export RESTORE_DRILL_MAX_FILE_BYTES="100MB"
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "RESTORE_DRILL_MAX_FILE_BYTES must be a non-negative integer"
+}
+
+# ---------- recording success for the preflight recency report ----------
+
+@test "drill records a timestamp on success" {
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 0 ]
+    [ -f "$RESTORE_DRILL_STATE_FILE" ]
+    # <epoch> <archive>
+    grep -qE "^[0-9]+ backup-drill-1$" "$RESTORE_DRILL_STATE_FILE"
+}
+
+@test "drill does not record a timestamp when it fails" {
+    export RESTORE_DRILL_PATHS="$REL_A:$REL_B"
+    export MOCK_EXTRACT_SKIP="$REL_B"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 1 ]
+    [ ! -f "$RESTORE_DRILL_STATE_FILE" ]
+}
+
+@test "drill does not record a timestamp when it skips on a lock" {
+    export MOCK_LIST_FAIL=2
+    export MOCK_LIST_MSG="Failed to create/acquire the lock"
+
+    run sh "$TEST_DIR/drill.sh"
+    [ "$status" -eq 0 ]
+    [ ! -f "$RESTORE_DRILL_STATE_FILE" ]
+}
+
+@test "drill defaults to a short lock wait" {
+    export RESTORE_DRILL_PATHS="$REL_A"
+
+    cat > "$TEST_DIR/bin/borg" << EOF
+#!/bin/sh
+echo "BORG_ARGS: \$*" >> "$TEST_DIR/borg-args.log"
+cmd="\$1"; shift
+if [ "\$cmd" = "extract" ]; then
+    for a in "\$@"; do
+        case "\$a" in --*|*::*|[0-9]*) continue ;; esac
+        mkdir -p "\$(dirname "\$a")"
+        printf 'x\n' > "\$a"
+    done
+else
+    printf '%s\n' "\$MOCK_ARCHIVE"
+fi
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    run sh "$TEST_DIR/drill.sh"
+    # Issue #42: a long blocking lock wait outlived the container. 60s, not 300s.
+    grep -q -- "--lock-wait 60" "$TEST_DIR/borg-args.log"
 }
 
 @test "drill passes --lock-wait so it waits rather than failing instantly" {

@@ -26,9 +26,12 @@ jobs:
 
       - name: Determine version bump from PR title
         id: version_bump
+        # PR titles are untrusted input: interpolating one directly into the
+        # script body lets a crafted title run commands on a runner that holds
+        # contents:write and the deploy key. Passing it through env is safe.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          PR_TITLE="${{ github.event.pull_request.title }}"
-
           # Check for version bump indicators in PR title
           if [[ "$PR_TITLE" =~ ^\[MAJOR\] ]] || [[ "$PR_TITLE" =~ ^\[major\] ]]; then
             echo "bump=major" >> $GITHUB_OUTPUT
@@ -47,20 +50,31 @@ jobs:
 
       - name: Check if release should be skipped
         id: skip_check
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_LABELS="${{ toJson(github.event.pull_request.labels.*.name) }}"
-
-          # Skip release for certain PR types
-          if [[ "$PR_TITLE" =~ ^\[SKIP\] ]] || \
-             [[ "$PR_TITLE" =~ ^\[skip\] ]] || \
-             [[ "$PR_TITLE" =~ ^docs: ]] || \
-             [[ "$PR_TITLE" =~ ^chore: ]] && ! [[ "$PR_TITLE" =~ deps ]] || \
-             [[ "$PR_LABELS" =~ "skip-release" ]]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
+          # Skip release for certain PR types.
+          #
+          # The "chore: but not deps" clause must be grouped explicitly. Shell
+          # && and || have equal precedence and bind left to right, so the
+          # previous unbracketed form parsed as
+          #   (((SKIP || skip) || docs) || chore) && !deps || label
+          # which meant a PR titled "[SKIP] bump deps" or "docs: update deps"
+          # did NOT skip, because the trailing !deps test applied to all of them.
+          #
+          # These rules are mirrored by the changelog gate in pr-validation.yml.
+          # Keep the two in step: exempting a PR here that the gate still
+          # requires an entry for (or vice versa) lets a release ship with an
+          # empty changelog section.
+          if [[ "$PR_TITLE" =~ ^\[(SKIP|skip)\] ]] ||
+             [[ "$PR_TITLE" =~ ^docs: ]] ||
+             { [[ "$PR_TITLE" =~ ^chore: ]] && [[ ! "$PR_TITLE" =~ deps ]]; } ||
+             [[ "$PR_LABELS" == *'"skip-release"'* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "⏭️ Release will be skipped (docs/chore/skip label)"
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "✅ Release will be created"
           fi
 

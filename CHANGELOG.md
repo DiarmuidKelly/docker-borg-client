@@ -81,6 +81,45 @@ user-visible changes to `[Unreleased]` as part of your PR.
 
 ### Fixed
 
+- `restore.sh extract` no longer accepts a destination that resolves to `/`.
+  The destination guard only rejected the literal `/`, but the default is `.`
+  and the image sets no working directory, so
+  `docker exec … /scripts/restore.sh extract latest` ran with a working
+  directory of `/` and recreated the archive tree over the live filesystem.
+  Destinations are now normalised (relative paths, `..` segments) before being
+  checked, and `BACKUP_PATHS` entries are normalised too, so a trailing slash
+  or a `BACKUP_PATHS=/` no longer bypasses the guard.
+- The restore drill no longer deletes an unvalidated directory.
+  `RESTORE_DRILL_TARGET` was `rm -rf`'d on every run, so pointing it at a
+  mounted restore directory erased that directory, and pointing it inside
+  `BACKUP_PATHS` deleted live source data on a schedule. The drill now refuses
+  an unsafe target and confines itself to a per-run subdirectory it creates.
+- A borg *warning* from `borg extract` (such as unsupported xattrs or ACLs on
+  the restore target) no longer aborts a drill and raises a CRITICAL
+  "backups may not be recoverable" alert. Warnings are reported and
+  verification still decides the outcome.
+- `BORG_PASSPHRASE_FILE` pointing at a missing file is now a startup error.
+  It was silently ignored, so a forgotten or mistyped secret mount kept working
+  from a leftover `BORG_PASSPHRASE` - defeating the point of using a file.
+- The startup preflight no longer runs `borg info`, whose cache statistics force
+  a chunks-cache sync that can block startup for a long time on a large
+  repository. `borg list --last 1` proves the passphrase decrypts the key
+  without touching the cache.
+- A non-numeric `RESTORE_DRILL_SAMPLE_COUNT` is reported as a configuration
+  error instead of dividing by zero and surfacing as a failed drill.
+- `restore.sh files <archive> <pattern>` exits 0 and explains itself when
+  nothing matches, instead of exiting 1 as though the repository had failed.
+- Preflight no longer claims "AUTO_INIT=false will create it" for a missing
+  repository; that case is now reported as a problem.
+- `scripts/preflight.sh` and `scripts/restore-drill.sh` are committed
+  executable, so they run from a git checkout and not only from the image.
+- The `no-changelog` label now actually clears the changelog check - the
+  workflow did not trigger on label changes.
+- The changelog gate and the release workflow now apply the same skip rules, so
+  a release can no longer ship an empty `[Unreleased]` section. `pr-release.yml`
+  also had an unbracketed `&&`/`||` chain that made `[SKIP] bump deps` and
+  `docs: update deps` release anyway, and interpolated the PR title directly
+  into a shell script.
 - Fast (<2s) backups no longer print a misleading
   `ERROR: Failed to start borg or capture PID`, and no longer skip prune and the
   success notification. (#56)

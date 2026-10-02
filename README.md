@@ -269,9 +269,11 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `RESTORE_DRILL_PATHS` | No | - | Colon-separated archive paths to drill instead of a rotating sample (e.g. `data/db/dump.sql`) |
 | `RESTORE_DRILL_MAX_FILE_BYTES` | No | `104857600` | Skip files larger than this when sampling (default 100 MB) |
 | `RESTORE_DRILL_ARCHIVE` | No | `latest` | Archive to drill |
-| `RESTORE_DRILL_TARGET` | No | `/tmp/restore-drill` | Where drilled files are restored |
+| `RESTORE_DRILL_TARGET` | No | `/tmp/restore-drill` | Scratch directory for drills. Each run works in its own subdirectory, so other files here are untouched. Must be outside `BACKUP_PATHS`. |
 | `RESTORE_DRILL_KEEP` | No | `false` | Keep restored files after the drill for inspection |
-| `RESTORE_DRILL_LOCK_WAIT` | No | `300` | Seconds to wait for the repository lock before skipping |
+| `RESTORE_DRILL_LOCK_WAIT` | No | `60` | Seconds to wait for the repository lock before skipping the drill |
+| `RESTORE_DRILL_STATE_FILE` | No | `/borg/config/last-restore-drill` | Where the last successful drill is recorded |
+| `RESTORE_DRILL_MAX_AGE_DAYS` | No | `100` | Preflight warns if the last successful drill is older than this |
 
 #### Notification Variables (Optional)
 
@@ -524,8 +526,24 @@ RESTORE_DRILL_PATHS=data/db/nightly-dump.sql:data/config/settings.yml
 **Behaviour notes:**
 
 - Drills are read-only and **never break a repository lock**. If a backup is
-  running, the drill waits `RESTORE_DRILL_LOCK_WAIT` seconds and then skips
-  that run rather than disrupting the backup.
+  running, the drill waits `RESTORE_DRILL_LOCK_WAIT` seconds (60 by default)
+  and then skips that run rather than disrupting the backup. The wait is
+  deliberately short: a drill gains nothing by blocking.
+- Because a skipped drill is easy to miss on a quarterly schedule, each success
+  is recorded and the startup preflight warns when the last one is older than
+  `RESTORE_DRILL_MAX_AGE_DAYS`:
+
+  ```
+  ⚠  Last successful restore drill: 2026-07-01 (93 days ago)
+     Drills may be skipping - a locked repository causes a skip.
+  ```
+- Each run works in its own subdirectory of `RESTORE_DRILL_TARGET`, so other
+  files in that directory are never touched. The drill refuses to start if the
+  target is `/` or inside `BACKUP_PATHS`, since it deletes its own working
+  directory afterwards.
+- A borg *warning* during extract (unsupported xattrs or ACLs on the restore
+  target, for instance) does not fail the drill on its own - the restored files
+  decide the result.
 - Sampling skips directories, empty files and anything larger than
   `RESTORE_DRILL_MAX_FILE_BYTES` (100 MB default), so a drill stays cheap even
   on a huge repository.

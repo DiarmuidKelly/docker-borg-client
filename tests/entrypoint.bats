@@ -559,6 +559,34 @@ EOF
 }
 
 # Test: BORG_PASSPHRASE_FILE takes precedence over BORG_PASSPHRASE env var
+# Regression: a missing passphrase file was silently ignored. With a leftover
+# BORG_PASSPHRASE still set, backups kept working from the env var - defeating
+# the point of using a file - and with it unset the error never mentioned the
+# unreadable file.
+@test "fails when BORG_PASSPHRASE_FILE points at a missing file" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+    export BORG_PASSPHRASE_FILE="$TEST_DIR/not-mounted"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "BORG_PASSPHRASE_FILE is set to '$TEST_DIR/not-mounted' but that file does not exist"
+    ! echo "$output" | grep -q "CROND STARTED"
+    unset BORG_PASSPHRASE_FILE
+}
+
+@test "does not silently fall back to BORG_PASSPHRASE when the file is missing" {
+    create_real_entrypoint_test
+    export AUTO_INIT="false"
+    export BORG_PASSPHRASE="leftover-from-old-config"
+    export BORG_PASSPHRASE_FILE="$TEST_DIR/not-mounted"
+
+    run sh "$TEST_DIR/entrypoint-test.sh"
+    [ "$status" -eq 1 ]
+    ! echo "$output" | grep -q "CROND STARTED"
+    unset BORG_PASSPHRASE_FILE
+}
+
 @test "BORG_PASSPHRASE_FILE overrides BORG_PASSPHRASE env var" {
     create_passphrase_test_script
     export BORG_PASSPHRASE="env-passphrase"

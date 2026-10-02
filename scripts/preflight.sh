@@ -38,6 +38,14 @@ echo "========================================="
 
 if [ -n "${BORG_PASSCOMMAND:-}" ]; then
     ok "Passphrase source: BORG_PASSCOMMAND (never stored in the environment)"
+elif [ -n "${BORG_PASSPHRASE_FILE:-}" ] && [ ! -f "$BORG_PASSPHRASE_FILE" ]; then
+    # Reporting the file as the source when it cannot be read would hide the
+    # very thing that went wrong - a secret mount that was forgotten or mistyped
+    bad "BORG_PASSPHRASE_FILE is set to '$BORG_PASSPHRASE_FILE' but that file does not exist"
+    if [ -n "${BORG_PASSPHRASE:-}" ]; then
+        echo "     BORG_PASSPHRASE is also set, so backups would silently fall back"
+        echo "     to the environment variable you were trying to avoid."
+    fi
 elif [ -n "${BORG_PASSPHRASE_FILE:-}" ]; then
     ok "Passphrase source: BORG_PASSPHRASE_FILE ($BORG_PASSPHRASE_FILE)"
 elif [ -n "${BORG_PASSPHRASE:-}" ]; then
@@ -81,37 +89,42 @@ esac
 
 REPO_OK=false
 if [ -n "${BORG_REPO:-}" ]; then
-    # Keep stdout (the JSON) and stderr (warnings such as SSH host-key notices)
-    # apart: mixing them makes the payload unparseable by jq.
-    INFO_JSON=$(mktemp)
-    INFO_ERR=$(borg info --json "$BORG_REPO" 2>&1 >"$INFO_JSON")
-    INFO_EXIT=$?
+    # `borg list` reads the manifest only. `borg info <repo>` was used here
+    # originally, but its cache statistics force a chunks-cache sync, which on a
+    # large repository (or after the cache volume is recreated) can block
+    # startup for a very long time while holding the repository lock - before
+    # cron has even started. Listing the newest archive proves reachability and
+    # that the passphrase decrypts the key, which is the point of the check.
+    #
+    # Keep stdout and stderr apart: borg writes notices such as the SSH host-key
+    # warning to stderr, which would otherwise corrupt the captured value.
+    LIST_OUT=$(mktemp)
+    LIST_ERR=$(borg list --last 1 --format '{archive} ({time}){NL}' "$BORG_REPO" 2>&1 >"$LIST_OUT")
+    LIST_EXIT=$?
 
-    if [ $INFO_EXIT -eq 0 ]; then
+    if [ $LIST_EXIT -eq 0 ]; then
         REPO_OK=true
         ok "Repository reachable and passphrase verified"
 
-        ARCHIVE_COUNT=$(jq -r '.cache.stats.total_chunks // empty' < "$INFO_JSON" 2>/dev/null || true)
-        REPO_SIZE=$(jq -r '.cache.stats.unique_csize // empty' < "$INFO_JSON" 2>/dev/null || true)
-        if [ -n "$REPO_SIZE" ]; then
-            echo "     Deduplicated size: $REPO_SIZE bytes, chunks: ${ARCHIVE_COUNT:-unknown}"
-        fi
-
-        LAST_ARCHIVE=$(borg list --last 1 --format '{archive} ({time}){NL}' "$BORG_REPO" 2>/dev/null | head -1)
+        LAST_ARCHIVE=$(head -1 "$LIST_OUT")
         if [ -n "$LAST_ARCHIVE" ]; then
             ok "Most recent archive: $LAST_ARCHIVE"
         else
             warn "Repository has no archives yet - nothing could be restored today"
         fi
-    elif printf '%s' "$INFO_ERR" | grep -q "passphrase supplied.*incorrect\|Wrong passphrase"; then
+    elif printf '%s' "$LIST_ERR" | grep -q "passphrase supplied.*incorrect\|Wrong passphrase"; then
         bad "Passphrase is WRONG for this repository - restores would be impossible"
-    elif printf '%s' "$INFO_ERR" | grep -qE "does not exist|Repository.*not.*found"; then
-        warn "Repository does not exist yet (AUTO_INIT=${AUTO_INIT:-false} will create it)"
+    elif printf '%s' "$LIST_ERR" | grep -qE "does not exist|Repository.*not.*found"; then
+        if [ "${AUTO_INIT:-false}" = "true" ]; then
+            warn "Repository does not exist yet - AUTO_INIT=true will create it"
+        else
+            bad "Repository does not exist and AUTO_INIT is not true, so nothing will create it"
+        fi
     else
         warn "Could not reach the repository right now:"
-        printf '%s\n' "$INFO_ERR" | head -3 | sed 's/^/     /'
+        printf '%s\n' "$LIST_ERR" | head -3 | sed 's/^/     /'
     fi
-    rm -f "$INFO_JSON"
+    rm -f "$LIST_OUT"
 else
     bad "BORG_REPO is not set"
 fi
@@ -143,6 +156,38 @@ fi
 
 if [ "${RESTORE_DRILL_ENABLED:-false}" = "true" ]; then
     ok "Scheduled restore drills enabled"
+
+    # A drill skips rather than breaking a repository lock, so a stale lock or a
+    # schedule that never fires would otherwise go unnoticed for a whole quarter.
+    # Report the age of the last success so that gap is visible on every start.
+    DRILL_STATE_FILE="${RESTORE_DRILL_STATE_FILE:-/borg/config/last-restore-drill}"
+    DRILL_MAX_AGE_DAYS="${RESTORE_DRILL_MAX_AGE_DAYS:-100}"
+
+    if [ -f "$DRILL_STATE_FILE" ]; then
+        DRILL_TS=$(awk '{print $1}' "$DRILL_STATE_FILE" 2>/dev/null)
+        DRILL_ARCHIVE=$(awk '{print $2}' "$DRILL_STATE_FILE" 2>/dev/null)
+        case "$DRILL_TS" in
+            ''|*[!0-9]*)
+                warn "Last restore drill timestamp in $DRILL_STATE_FILE is unreadable"
+                ;;
+            *)
+                DRILL_AGE_DAYS=$(( ( $(date +%s) - DRILL_TS ) / 86400 ))
+                DRILL_WHEN=$(date -d "@$DRILL_TS" '+%Y-%m-%d' 2>/dev/null \
+                    || date -r "$DRILL_TS" '+%Y-%m-%d' 2>/dev/null \
+                    || echo "unknown")
+                if [ "$DRILL_AGE_DAYS" -gt "$DRILL_MAX_AGE_DAYS" ]; then
+                    warn "Last successful restore drill: ${DRILL_WHEN} (${DRILL_AGE_DAYS} days ago)"
+                    echo "     Drills may be skipping - a locked repository causes a skip."
+                    echo "     Check the logs, or run '/scripts/restore.sh drill' now."
+                else
+                    ok "Last successful restore drill: ${DRILL_WHEN} (${DRILL_AGE_DAYS} days ago, ${DRILL_ARCHIVE})"
+                fi
+                ;;
+        esac
+    else
+        warn "No restore drill has ever completed successfully"
+        echo "     Run '/scripts/restore.sh drill' to prove recovery works."
+    fi
 else
     warn "RESTORE_DRILL_ENABLED is not true - recoverability is never proven."
     echo "     An untested backup is not a backup. Run '/scripts/restore.sh drill'."

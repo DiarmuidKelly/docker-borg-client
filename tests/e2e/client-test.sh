@@ -160,7 +160,7 @@ step "restore.sh refuses to extract over the live source data"
 if /scripts/restore.sh extract latest / 2>/tmp/guard.out; then
     fail "extract to / was permitted - the fail-safe is not working"
 fi
-grep -q "refusing to extract to '/'" /tmp/guard.out || fail "unexpected guard message"
+grep -q "refusing to extract at '/'" /tmp/guard.out || fail "unexpected guard message"
 if /scripts/restore.sh extract latest /source/restore-here 2>/tmp/guard2.out; then
     fail "extract into a backup source path was permitted"
 fi
