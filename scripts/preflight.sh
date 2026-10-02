@@ -193,6 +193,55 @@ else
     echo "     An untested backup is not a backup. Run '/scripts/restore.sh drill'."
 fi
 
+# ---------- 6. what each job did last time ----------
+# Read back from the persistent history file. Container stdout is lost to log
+# rotation and redeploys, so without this a failed verify leaves no trace.
+
+HISTORY_FILE="${HISTORY_FILE:-/borg/config/history.log}"
+
+if [ -f "$HISTORY_FILE" ]; then
+    echo "-----------------------------------------"
+    echo "Last run of each job (from $HISTORY_FILE)"
+
+    for job in backup prune verify restore; do
+        # Last recorded line for this job, whatever its outcome
+        entry=$(grep " ${job}\." "$HISTORY_FILE" 2>/dev/null | tail -1)
+
+        if [ -z "$entry" ]; then
+            echo "  -  ${job}: no record yet"
+            continue
+        fi
+
+        when=$(printf '%s' "$entry" | awk '{print $1}')
+        event=$(printf '%s' "$entry" | awk '{print $2}')
+        detail=$(printf '%s' "$entry" | sed 's/^[^|]*| *//')
+
+        case "$event" in
+            *.failure|*.error)
+                warn "${job}: FAILED at ${when}"
+                [ -n "$detail" ] && echo "     $detail"
+                ;;
+            *)
+                ok "${job}: ${event} at ${when}"
+                ;;
+        esac
+    done
+
+    # Surface any failure still present in the retained history, even if the
+    # job has since succeeded - a verify that found corruption once matters.
+    FAILURES_IN_HISTORY=$(grep -cE " [a-z-]+\.(failure|error) " "$HISTORY_FILE" 2>/dev/null || true)
+    case "$FAILURES_IN_HISTORY" in
+        ''|*[!0-9]*) FAILURES_IN_HISTORY=0 ;;
+    esac
+    if [ "$FAILURES_IN_HISTORY" -gt 0 ]; then
+        echo "     ${FAILURES_IN_HISTORY} failure event(s) in retained history:"
+        echo "       grep -E '\.(failure|error) ' $HISTORY_FILE"
+    fi
+else
+    echo "-----------------------------------------"
+    echo "No job history yet ($HISTORY_FILE)"
+fi
+
 # ---------- summary ----------
 
 echo "-----------------------------------------"

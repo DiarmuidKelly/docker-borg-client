@@ -89,7 +89,7 @@ bats tests/backup.bats
 | `check-window.bats` | Backup window time checking |
 | `entrypoint.bats` | Lock handling, cron setup |
 | `init.bats` | Repository initialisation |
-| `notify.bats` | Notification system |
+| `notify.bats` | Job history recording |
 | `preflight.bats` | Startup recovery-readiness checks |
 | `prune.bats` | Archive pruning logic |
 | `restore.bats` | Restore operations and destination fail-safes |

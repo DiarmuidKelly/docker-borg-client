@@ -1,5 +1,19 @@
 # Notifications Feature
 
+> **Superseded (2026-10)**: The TrueNAS transport described here was removed in
+> favour of a persistent job history file. It never worked in practice:
+> `alert.oneshot_create` accepts the call and returns an ID, but the alert never
+> appears in the TrueNAS UI and never triggers any notification service, because
+> only predefined system alert classes do (#33). Every event was silently
+> discarded.
+>
+> `scripts/notify.sh` keeps the same call signature but now appends to
+> `/borg/config/history.log`, which `preflight.sh` reads back on startup. See
+> the **Job History** section of the README. Push alerting is still open as
+> #46 / #47.
+>
+> Retained as a record of the original design and why it was abandoned.
+
 > **Update (2026-01)**: This feature was implemented using TrueNAS WebSocket JSON-RPC API instead of REST API. TrueNAS SCALE 25.04+ deprecated the REST API in favour of WebSocket JSON-RPC. See the implementation in `scripts/notify.sh` which uses `websocat` for WebSocket communication.
 
 ## Overview

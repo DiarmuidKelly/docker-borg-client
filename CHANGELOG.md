@@ -15,6 +15,54 @@ user-visible changes to `[Unreleased]` as part of your PR.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Job events were silently discarded.** `notify.sh` pushed every event to the
+  TrueNAS API, which accepted the call and returned an ID but never surfaced the
+  alert in the UI or triggered any notification service, because only predefined
+  system alert classes do (#33). All sixteen call sites were no-ops - including
+  `backup.failure` and `verify.failure`, so a nightly backup could fail for
+  months, or `borg check` could detect corruption, and nothing would say so.
+
+  Cron output only ever went to the container's stdout, which is lost to log
+  rotation, a redeploy or an app update, so there was no durable record either.
+  Unlike backups - where a stale "most recent archive" is ground truth you can
+  query - a failed verify left no trace anywhere.
+
+  `notify.sh` keeps its exact call signature, so every call site is unchanged,
+  and now appends to `/borg/config/history.log` on the persisted config volume,
+  one greppable event per line. Capped by `HISTORY_MAX_LINES` (500 by default,
+  oldest dropped), roughly six months of a daily backup plus weekly checks.
+  Writing is best-effort: a status line that cannot be written warns and exits 0
+  rather than failing the backup.
+
+  The startup preflight reads the history back and prints the last run of each
+  job, flagging failures and counting any failure still present in the retained
+  history - so a verify that found corruption stays visible even after a later
+  run passes.
+
+  **This container still does not push alerts anywhere.** It records what
+  happened and you have to look, which is what it did in practice before, minus
+  the misleading documentation. Push alerting remains open as #46 / #47.
+
+### Removed
+
+- **`NOTIFY_TRUENAS_ENABLED`, `NOTIFY_TRUENAS_API_URL`, `NOTIFY_TRUENAS_API_KEY`,
+  `NOTIFY_TRUENAS_VERIFY_SSL` and `NOTIFY_EVENTS`**, along with the transport
+  they configured. If you had any of them set you can delete them; leaving them
+  set is harmless, they are simply ignored.
+
+  `NOTIFY_EVENTS` has no replacement by design: the history file is a log, not
+  an alert feed, and one that omitted successes could not answer "did the last
+  backup work?". Every event is recorded.
+- The README's Notifications section, which advertised the feature with
+  working-looking setup instructions and so misled anyone pulling the published
+  image into believing they had alerting.
+- `curl` and `websocat` are no longer installed in the image; they existed only
+  for the removed transport.
+- `docs/truenas-api-key-setup.md`, which documented setting up the API key for
+  notifications that could never arrive.
+
 ## [0.9.0] - 2026-10-02
 
 ### Added

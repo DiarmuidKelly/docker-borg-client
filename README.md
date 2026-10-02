@@ -42,7 +42,7 @@ If you're running a home server, NAS, or any system with important data, you nee
   - [Docker Compose Setup](#docker-compose-setup)
 - [Configuration Reference](#configuration-reference)
   - [Environment Variables](#environment-variables)
-  - [Notification Variables](#notification-variables-optional)
+  - [Job History Variables](#job-history-variables-optional)
   - [Backup Time Window and Rate Limiting](#backup-time-window-and-rate-limiting-optional)
   - [Repository Integrity Verification](#repository-integrity-verification-optional)
   - [Restore Drill Variables](#restore-drill-variables-optional)
@@ -57,7 +57,7 @@ If you're running a home server, NAS, or any system with important data, you nee
 - [Docker Compose Example](#docker-compose-example)
 - [Additional Guides](#additional-guides)
 - [Cron Schedule Examples](#cron-schedule-examples)
-- [Notifications](#notifications)
+- [Job History](#job-history)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
 - [Security Best Practices](#security-best-practices)
@@ -275,19 +275,21 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `RESTORE_DRILL_STATE_FILE` | No | `/borg/config/last-restore-drill` | Where the last successful drill is recorded |
 | `RESTORE_DRILL_MAX_AGE_DAYS` | No | `100` | Preflight warns if the last successful drill is older than this |
 
-#### Notification Variables (Optional)
+#### Job History Variables (Optional)
+
+Every job records its outcome to a persistent file, so a failure survives log
+rotation, a redeploy and an app restart.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NOTIFY_TRUENAS_ENABLED` | No | `false` | Enable TrueNAS API notifications |
-| `NOTIFY_TRUENAS_API_URL` | No | - | TrueNAS WebSocket URL (e.g., `ws://192.168.1.100` or `wss://truenas.local`) |
-| `NOTIFY_TRUENAS_API_KEY` | No | - | TrueNAS API key (generate in Settings → API Keys) |
-| `NOTIFY_TRUENAS_VERIFY_SSL` | No | `true` | Verify SSL certificates for wss:// (set to `false` for self-signed) |
-| `NOTIFY_EVENTS` | No | `backup.failure,prune.failure,verify.failure` | Comma-separated list of events to notify |
+| `HISTORY_FILE` | No | `/borg/config/history.log` | Where job events are recorded |
+| `HISTORY_MAX_LINES` | No | `500` | Rolling cap; oldest lines are dropped |
 
-**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`, `verify.success`, `verify.failure`, `restore.success`, `restore.failure`, `container.startup`, `container.shutdown`
+**Recorded events**: `backup.success`, `backup.failure`, `prune.success`,
+`prune.failure`, `verify.success`, `verify.failure`, `restore.success`,
+`restore.failure`, `container.startup`, `container.shutdown`
 
-See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed instructions.
+See [Job History](#job-history).
 
 #### Backup Time Window and Rate Limiting (Optional)
 
@@ -501,14 +503,13 @@ verify that you can get your files back. A restore drill does:
 3. Restores them to a temporary directory.
 4. Compares each restored file against the live source byte-for-byte
    (SHA-256) when the source still exists.
-5. Reports a summary and sends a `restore.success` / `restore.failure`
-   notification.
+5. Reports a summary and writes a `restore.success` / `restore.failure` entry to
+   the [job history](#job-history).
 
 ```bash
 RESTORE_DRILL_ENABLED=true
 RESTORE_DRILL_CRON_SCHEDULE=0 4 1 1,4,7,10 *   # Quarterly, 1st at 04:00
 RESTORE_DRILL_SAMPLE_COUNT=3
-NOTIFY_EVENTS=backup.failure,restore.failure,restore.success
 ```
 
 Run one on demand at any time:
@@ -701,7 +702,6 @@ volumes:
 
 ## Additional Guides
 
-- **TrueNAS API Key Setup**: [docs/truenas-api-key-setup.md](docs/truenas-api-key-setup.md) - Generate API keys for notifications
 - **Recovery Flow and Fail-Safes**: [docs/20261002-recovery-flow.md](docs/20261002-recovery-flow.md) - Design notes behind the restore tooling, drills and preflight
 - **Changelog**: [CHANGELOG.md](CHANGELOG.md) - Notable changes per release. **Read the "Changed" entries before upgrading.**
 
@@ -717,53 +717,81 @@ The `CRON_SCHEDULE` variable uses standard cron format: `minute hour day-of-mont
 | `0 */6 * * *` | Every 6 hours |
 | `30 1 1 * *` | First day of every month at 1:30am |
 
-## Notifications
+## Job History
 
-Docker Borg Client supports sending notifications to TrueNAS SCALE via the TrueNAS WebSocket JSON-RPC API. This allows you to receive alerts through your existing TrueNAS notification channels (email, Slack, etc.).
+Cron output goes to the container's stdout, which is lost to log rotation, a
+redeploy or an app update. A failed backup, or a `borg check` that detected
+corruption, could therefore leave no trace at all - and nothing in the
+repository reveals it either.
 
-**Requirements**: TrueNAS SCALE 25.04 or later
+Every job now records its outcome to `/borg/config/history.log`, on the
+persisted config volume:
 
-### Quick Setup (TrueNAS SCALE)
+```
+2026-10-02T01:03:40+0000 backup.success INFO Borg Backup Successful | Archive: backup-2026-10-02_01-00-00, Duration: 206s
+2026-10-02T01:03:41+0000 prune.success INFO Borg Prune Successful | Retention: 7d/4w/6m
+2026-10-02T03:14:02+0000 verify.failure CRITICAL Borg Verification Failed | Level: archives, Exit code: 2
+```
 
-1. **Generate API Key** in TrueNAS:
-   - Navigate to **Settings** → **API Keys**
-   - Click **Add** and create a new key
-   - Copy the generated key (shown only once!)
+One event per line, so it is greppable:
 
-2. **Configure Notifications**:
-   ```bash
-   NOTIFY_TRUENAS_ENABLED=true
-   NOTIFY_TRUENAS_API_URL=ws://192.168.1.100  # Your TrueNAS IP with ws:// protocol
-   NOTIFY_TRUENAS_API_KEY=1-abc123yourkey
-   NOTIFY_EVENTS=backup.failure,backup.success
-   ```
+```bash
+# Anything that failed
+grep -E '\.(failure|error) ' /borg/config/history.log
 
-   **Note**: Use `ws://` for unencrypted WebSocket connections (recommended for local networks).
+# Just verification history
+grep ' verify\.' /borg/config/history.log
+```
 
-3. **Test Notification**:
-   ```bash
-   # From container shell
-   /scripts/notify.sh "backup.success" "INFO" "Test" "This is a test notification"
-   ```
+The file is capped at `HISTORY_MAX_LINES` (500 by default), dropping the oldest
+lines - roughly six months at a daily backup plus weekly checks.
 
-For detailed setup instructions, see [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md).
+The startup preflight reads it back, so a restart gives you a status board:
 
-### Event Types
+```
+-----------------------------------------
+Last run of each job (from /borg/config/history.log)
+  ✓  backup: backup.success at 2026-10-02T01:03:40
+  ✓  prune: prune.success at 2026-10-02T01:03:41
+  ⚠  verify: FAILED at 2026-09-29T03:14:02
+     Level: archives, Exit code: 2
+  ✓  restore: restore.success at 2026-10-02T08:12:33
+     1 failure event(s) in retained history:
+       grep -E '\.(failure|error) ' /borg/config/history.log
+```
 
-- `backup.success` - Backup completed successfully
-- `backup.failure` - Backup failed
-- `prune.success` - Prune completed successfully
-- `prune.failure` - Prune failed
-- `verify.success` - Repository verification completed successfully
-- `verify.failure` - Repository verification failed (potential corruption detected)
-- `restore.success` - Restore drill restored and verified its sample successfully
-- `restore.failure` - Restore drill could not recover files (**your backups may not be recoverable**)
-- `container.startup` - Container started (useful for monitoring container health)
-- `container.shutdown` - Container stopping (useful for tracking restarts/stops)
+Run it on demand at any time:
 
-**Default**: Only failures are notified (any `*.failure` event, including `restore.failure`)
+```bash
+docker compose exec borg-backup /scripts/preflight.sh
+```
 
-**Tip**: Add `container.startup,container.shutdown` to track container lifecycle events
+### There is no push alerting
+
+This container does **not** send alerts anywhere. It records what happened; you
+have to look.
+
+Earlier versions claimed to push notifications to the TrueNAS API. That never
+worked: `alert.oneshot_create` accepts the call and returns an ID, but the alert
+never appears in the UI and never triggers any notification service, because
+only predefined system alert classes do ([#33](https://github.com/DiarmuidKelly/docker-borg-client/issues/33)).
+Every event was silently discarded. The `NOTIFY_TRUENAS_*` and `NOTIFY_EVENTS`
+variables have been removed along with that transport.
+
+The most reliable health check needs no notifications at all - ask the
+repository directly:
+
+```bash
+/scripts/preflight.sh          # most recent archive, passphrase, job history
+/scripts/restore.sh list       # every archive with its date - gaps are visible
+```
+
+`Most recent archive` is ground truth for backup health: if backups have been
+failing for a week, that date is a week old regardless of what any log says.
+
+Push alerting is tracked in
+[#46](https://github.com/DiarmuidKelly/docker-borg-client/issues/46) /
+[#47](https://github.com/DiarmuidKelly/docker-borg-client/issues/47).
 
 ## Monitoring
 
