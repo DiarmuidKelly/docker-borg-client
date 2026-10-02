@@ -76,10 +76,15 @@ bats tests/backup.bats
 | `entrypoint.bats` | Lock handling, cron setup |
 | `init.bats` | Repository initialisation |
 | `notify.bats` | Notification system |
+| `preflight.bats` | Startup recovery-readiness checks |
 | `prune.bats` | Archive pruning logic |
-| `restore.bats` | Restore operations |
+| `restore.bats` | Restore operations and destination fail-safes |
+| `restore-drill.bats` | Automated restore drills |
 | `verify.bats` | Repository integrity verification |
 | `window-monitor.bats` | Window monitoring and backup termination |
+
+Note: `make test-alpine` installs `jq`, which the restore-drill tests need for
+parsing `borg list --json-lines` output.
 
 ### End-to-End Tests
 
@@ -95,6 +100,9 @@ This will:
 3. Run a backup with `AUTO_INIT=true` and `RUN_ON_START=true`
 4. Verify the archive exists and excluded paths are absent
 5. Restore files and assert they match the originals
-6. Tear everything down
+6. Exercise the recovery flow: preflight, `latest`, `files`, `dry-run`,
+   selective extract, the destination fail-safes, a passing restore drill and a
+   failing one
+7. Tear everything down
 
 Unit tests run on every push and pull request via GitHub Actions. E2E tests run as part of the release workflow.

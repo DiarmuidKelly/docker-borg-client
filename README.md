@@ -9,7 +9,9 @@
 [![GitHub release](https://img.shields.io/github/v/release/DiarmuidKelly/docker-borg-client?logo=github)](https://github.com/DiarmuidKelly/docker-borg-client/releases)
 [![Licence](https://img.shields.io/github/license/DiarmuidKelly/docker-borg-client)](LICENCE)
 
-A minimal, generic Docker container for running [BorgBackup](https://www.borgbackup.org/) backups to any remote SSH-accessible Borg repository. Designed for TrueNAS but works anywhere Docker runs.
+A minimal, generic Docker container for running [BorgBackup](https://www.borgbackup.org/) ([source](https://github.com/borgbackup/borg)) backups to any remote SSH-accessible Borg repository. Designed for TrueNAS but works anywhere Docker runs.
+
+Built on Borg **1.4.4** (pinned to the Alpine `borgbackup` package; see [Dockerfile](Dockerfile)).
 
 ## Overview
 
@@ -43,7 +45,14 @@ If you're running a home server, NAS, or any system with important data, you nee
   - [Notification Variables](#notification-variables-optional)
   - [Backup Time Window and Rate Limiting](#backup-time-window-and-rate-limiting-optional)
   - [Repository Integrity Verification](#repository-integrity-verification-optional)
+  - [Restore Drill Variables](#restore-drill-variables-optional)
   - [Volume Mounts](#volume-mounts)
+- [Recovery](#recovery)
+  - [Recovery Quick Reference](#recovery-quick-reference)
+  - [Restoring Files](#restoring-files)
+  - [Browsing an Archive (FUSE Mount)](#browsing-an-archive-fuse-mount)
+  - [Restore Drills: Proving Recoverability](#restore-drills-proving-recoverability)
+  - [Startup Preflight](#startup-preflight)
 - [Manual Operations](#manual-operations)
 - [Docker Compose Example](#docker-compose-example)
 - [Additional Guides](#additional-guides)
@@ -64,6 +73,8 @@ If you're running a home server, NAS, or any system with important data, you nee
 - 🔧 **Generic**: Works with any Borg-over-SSH target (Hetzner, rsync.net, self-hosted)
 - 📅 **Automated**: Configurable cron-based scheduled backups
 - ♻️ **Smart retention**: Automatic pruning with configurable policies
+- 🚑 **Proven recovery**: Scheduled [restore drills](#restore-drills-proving-recoverability) that actually restore files and compare them to the source
+- 🛡️ **Fail-safes**: Startup [recovery-readiness checks](#startup-preflight), refusal to restore over live data, drills that never break a running backup's lock
 - 🏗️ **Multi-arch**: Supports amd64 and arm64
 
 ## Quick Start
@@ -245,6 +256,22 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `VERIFY_REPO_CRON_SCHEDULE` | No | - | Repository check schedule (e.g., `0 3 * * 0` for weekly Sunday 03:00) |
 | `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | - | Archives check schedule (e.g., `0 3 1 * *` for monthly 1st at 03:00) |
 | `VERIFY_LEVEL` | No | `repository` | Manual verification depth: `repository`, `archives`, or `full` |
+| `PREFLIGHT_ENABLED` | No | `true` | Run the startup recovery-readiness report |
+| `PREFLIGHT_STRICT` | No | `false` | Refuse to start if preflight finds a problem (e.g. a wrong passphrase) |
+
+#### Restore Drill Variables (Optional)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RESTORE_DRILL_ENABLED` | No | `false` | Enable scheduled restore drills |
+| `RESTORE_DRILL_CRON_SCHEDULE` | No | - | Drill schedule (e.g. `0 4 1 1,4,7,10 *` for quarterly) |
+| `RESTORE_DRILL_SAMPLE_COUNT` | No | `3` | How many files to restore per drill |
+| `RESTORE_DRILL_PATHS` | No | - | Colon-separated archive paths to drill instead of a rotating sample (e.g. `data/db/dump.sql`) |
+| `RESTORE_DRILL_MAX_FILE_BYTES` | No | `104857600` | Skip files larger than this when sampling (default 100 MB) |
+| `RESTORE_DRILL_ARCHIVE` | No | `latest` | Archive to drill |
+| `RESTORE_DRILL_TARGET` | No | `/tmp/restore-drill` | Where drilled files are restored |
+| `RESTORE_DRILL_KEEP` | No | `false` | Keep restored files after the drill for inspection |
+| `RESTORE_DRILL_LOCK_WAIT` | No | `300` | Seconds to wait for the repository lock before skipping |
 
 #### Notification Variables (Optional)
 
@@ -256,7 +283,7 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `NOTIFY_TRUENAS_VERIFY_SSL` | No | `true` | Verify SSL certificates for wss:// (set to `false` for self-signed) |
 | `NOTIFY_EVENTS` | No | `backup.failure,prune.failure,verify.failure` | Comma-separated list of events to notify |
 
-**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`, `verify.success`, `verify.failure`, `container.startup`, `container.shutdown`
+**Available Events**: `backup.success`, `backup.failure`, `prune.success`, `prune.failure`, `verify.success`, `verify.failure`, `restore.success`, `restore.failure`, `container.startup`, `container.shutdown`
 
 See [TrueNAS API Key Setup Guide](docs/truenas-api-key-setup.md) for detailed instructions.
 
@@ -372,6 +399,170 @@ docker compose run --rm -e VERIFY_LEVEL=full borg-backup /scripts/verify.sh
 | `/ssh` | SSH private key | read-only |
 | `/borg/cache` | Borg cache (improves performance) | read-write |
 | `/borg/config` | Borg config persistence | read-write |
+| `/restore` | Destination for restored files (optional) | read-write |
+
+## Recovery
+
+> A backup you have never restored is a hypothesis, not a backup.
+
+This container treats recovery as a first-class operation: the same scripts that
+take backups can list, inspect, verify and restore them, and can prove on a
+schedule that restoring still works.
+
+### Recovery Quick Reference
+
+Every command below runs inside the container. On TrueNAS use
+**Apps** → **Installed** → **borg-backup** → **Shell**; with Compose use
+`docker compose exec borg-backup <command>` (or `run --rm` on a stopped stack).
+
+| Goal | Command |
+|------|---------|
+| What archives exist? | `/scripts/restore.sh list` |
+| Name of the newest archive | `/scripts/restore.sh latest` |
+| What is in an archive? | `/scripts/restore.sh info latest` |
+| Find a file inside an archive | `/scripts/restore.sh files latest holiday.jpg` |
+| Prove an archive is readable (writes nothing) | `/scripts/restore.sh dry-run latest` |
+| Restore everything | `/scripts/restore.sh extract latest /restore` |
+| Restore one file | `/scripts/restore.sh extract latest /restore data/photos/holiday.jpg` |
+| Browse an archive like a filesystem | `/scripts/restore.sh mount latest /mnt/backup` |
+| Stop browsing | `/scripts/restore.sh umount /mnt/backup` |
+| Check repository integrity | `/scripts/restore.sh check` |
+| Prove recovery works right now | `/scripts/restore.sh drill` |
+| Export the key for disaster recovery | `/scripts/restore.sh key-export` |
+
+Any archive name may be given as `latest`, which resolves to the newest archive
+(Borg 1.x has no `::latest` pseudo-archive, so the container resolves it for
+you).
+
+### Restoring Files
+
+Restores never write to your source data. Extract into a dedicated directory
+and move files back yourself once you have checked them.
+
+```bash
+# Everything, into a restore volume
+docker compose run --rm -v /mnt/pool/borg-restore:/restore borg-backup \
+  /scripts/restore.sh extract latest /restore
+
+# Just the paths you need - far quicker on a large repository
+docker compose run --rm -v /mnt/pool/borg-restore:/restore borg-backup \
+  /scripts/restore.sh extract latest /restore data/documents/tax-2025.pdf
+```
+
+Paths inside an archive are stored **without a leading slash**: a source path of
+`/data/documents` appears in the archive as `data/documents`. Use
+`/scripts/restore.sh files latest <pattern>` to find the exact path.
+
+**Built-in fail-safes.** `extract` refuses to run if the destination is `/` or
+sits inside any configured `BACKUP_PATHS`, because Borg would recreate the
+original tree there and overwrite the very data you are recovering. It also
+warns when the destination is not empty.
+
+### Browsing an Archive (FUSE Mount)
+
+Mounting is the cheapest way to pick a few files out of a multi-terabyte
+archive: Borg fetches only the data you actually read.
+
+Mounting needs kernel FUSE access, which Docker does not grant by default:
+
+```yaml
+services:
+  borg-backup:
+    devices:
+      - "/dev/fuse"
+    cap_add:
+      - "SYS_ADMIN"
+    security_opt:
+      - "apparmor=unconfined"
+```
+
+```bash
+docker run --rm -it --device /dev/fuse --cap-add SYS_ADMIN \
+  --security-opt apparmor=unconfined \
+  -e BORG_REPO=... -e BORG_PASSPHRASE=... \
+  -v ./ssh:/ssh:ro diarmuidk/docker-borg-client \
+  /scripts/restore.sh mount latest /mnt/backup
+```
+
+Without those options `restore.sh mount` exits with instructions rather than a
+bare `FUSE mount failed`. If you cannot grant them, use `extract` instead - it
+needs no special privileges.
+
+### Restore Drills: Proving Recoverability
+
+`borg check` verifies that the repository is *structurally* sound. It does not
+verify that you can get your files back. A restore drill does:
+
+1. Resolves the archive to drill (newest by default).
+2. Picks a sample of real files from it, rotating the selection by day so
+   successive drills cover different data.
+3. Restores them to a temporary directory.
+4. Compares each restored file against the live source byte-for-byte
+   (SHA-256) when the source still exists.
+5. Reports a summary and sends a `restore.success` / `restore.failure`
+   notification.
+
+```bash
+RESTORE_DRILL_ENABLED=true
+RESTORE_DRILL_CRON_SCHEDULE=0 4 1 1,4,7,10 *   # Quarterly, 1st at 04:00
+RESTORE_DRILL_SAMPLE_COUNT=3
+NOTIFY_EVENTS=backup.failure,restore.failure,restore.success
+```
+
+Run one on demand at any time:
+
+```bash
+docker compose exec borg-backup /scripts/restore.sh drill
+```
+
+Pin the drill to the files that matter most instead of a random sample:
+
+```bash
+RESTORE_DRILL_PATHS=data/db/nightly-dump.sql:data/config/settings.yml
+```
+
+**Behaviour notes:**
+
+- Drills are read-only and **never break a repository lock**. If a backup is
+  running, the drill waits `RESTORE_DRILL_LOCK_WAIT` seconds and then skips
+  that run rather than disrupting the backup.
+- Sampling skips directories, empty files and anything larger than
+  `RESTORE_DRILL_MAX_FILE_BYTES` (100 MB default), so a drill stays cheap even
+  on a huge repository.
+- Restored files are deleted afterwards unless `RESTORE_DRILL_KEEP=true`.
+- A file that differs from the live source is reported as restored, not failed:
+  Borg has already verified its chunk hashes, so a difference means the source
+  changed since the backup. Only an unreadable or missing file fails a drill.
+
+### Startup Preflight
+
+On every start the container reports its recovery readiness, surfacing the
+problems you would otherwise discover mid-recovery:
+
+```
+=========================================
+Preflight / Recovery Readiness
+=========================================
+  ⚠  Passphrase source: BORG_PASSPHRASE env var - readable via 'docker inspect'.
+  ✓  SSH key present: /ssh/key (mode 600)
+  ✓  Repository reachable and passphrase verified
+  ✓  Most recent archive: backup-2026-10-02_01-00-00 (Fri, 2026-10-02 01:00:04)
+  ⚠  Repository key not exported - run '/scripts/restore.sh key-export'
+  ✓  Scheduled backups: 0 2 * * 0
+  ⚠  RESTORE_DRILL_ENABLED is not true - recoverability is never proven.
+-----------------------------------------
+Preflight: OK with 3 warning(s)
+=========================================
+```
+
+The repository check is the important one: it proves the configured passphrase
+can actually decrypt the repository key, rather than assuming so until the next
+restore.
+
+Preflight is report-only by default - a container that refuses to start because
+the network blipped is worse than one that warns and retries on schedule. Set
+`PREFLIGHT_STRICT=true` to fail fast instead (useful in CI or after a config
+change), or `PREFLIGHT_ENABLED=false` to skip it.
 
 ## Manual Operations
 
@@ -385,10 +576,15 @@ Then run any of the following commands:
 
 - **List backups**: `/scripts/restore.sh list`
 - **View archive info**: `/scripts/restore.sh info backup-2026-01-18_12-00-00`
+- **Find a file in an archive**: `/scripts/restore.sh files latest holiday.jpg`
 - **Check repository**: `/scripts/restore.sh check`
 - **Verify repository integrity**: `/scripts/verify.sh`
+- **Prove a restore works**: `/scripts/restore.sh drill`
+- **Recovery readiness report**: `/scripts/preflight.sh`
 - **Manual backup**: `/scripts/backup.sh`
 - **Manual prune**: `/scripts/prune.sh`
+
+See [Recovery](#recovery) for the full restore workflow.
 
 **Restore from backup**:
 1. Create a restore directory on your pool: `mkdir -p /mnt/pool/borg-restore`
@@ -417,13 +613,18 @@ docker compose run --rm borg-backup /scripts/restore.sh info backup-2026-01-18_1
 #### Restore from Backup
 
 ```bash
-# Extract to current directory
+# Extract a whole archive to a restore directory
 docker compose run --rm -v $(pwd)/restore:/restore borg-backup \
   /scripts/restore.sh extract backup-2026-01-18_12-00-00 /restore
 
-# Mount archive for browsing
-docker compose run --rm -v $(pwd)/mnt:/mnt borg-backup \
-  /scripts/restore.sh mount backup-2026-01-18_12-00-00 /mnt
+# Extract only the paths you need
+docker compose run --rm -v $(pwd)/restore:/restore borg-backup \
+  /scripts/restore.sh extract latest /restore data/documents/tax-2025.pdf
+
+# Mount archive for browsing (requires FUSE access - see Recovery)
+docker compose run --rm -v $(pwd)/mnt:/mnt \
+  --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+  borg-backup /scripts/restore.sh mount backup-2026-01-18_12-00-00 /mnt
 ```
 
 #### Check Repository Integrity
@@ -483,6 +684,7 @@ volumes:
 ## Additional Guides
 
 - **TrueNAS API Key Setup**: [docs/truenas-api-key-setup.md](docs/truenas-api-key-setup.md) - Generate API keys for notifications
+- **Recovery Flow and Fail-Safes**: [docs/20261002-recovery-flow.md](docs/20261002-recovery-flow.md) - Design notes behind the restore tooling, drills and preflight
 
 ## Cron Schedule Examples
 
@@ -535,10 +737,12 @@ For detailed setup instructions, see [TrueNAS API Key Setup Guide](docs/truenas-
 - `prune.failure` - Prune failed
 - `verify.success` - Repository verification completed successfully
 - `verify.failure` - Repository verification failed (potential corruption detected)
+- `restore.success` - Restore drill restored and verified its sample successfully
+- `restore.failure` - Restore drill could not recover files (**your backups may not be recoverable**)
 - `container.startup` - Container started (useful for monitoring container health)
 - `container.shutdown` - Container stopping (useful for tracking restarts/stops)
 
-**Default**: Only failures are notified (`backup.failure,prune.failure,verify.failure`)
+**Default**: Only failures are notified (any `*.failure` event, including `restore.failure`)
 
 **Tip**: Add `container.startup,container.shutdown` to track container lifecycle events
 
@@ -575,10 +779,19 @@ docker compose run --rm borg-backup borg info $BORG_REPO
 
 ### Verify Backups
 
-Regularly test restores to ensure backups are working:
+`restore.sh check` verifies repository structure; it does not prove your files
+can be restored. Run a drill for that:
+
 ```bash
+# Structural integrity only
 docker compose run --rm borg-backup /scripts/restore.sh check
+
+# Actually restores a sample of files and compares them to the source
+docker compose run --rm borg-backup /scripts/restore.sh drill
 ```
+
+Better still, schedule drills with `RESTORE_DRILL_ENABLED=true` - see
+[Restore Drills](#restore-drills-proving-recoverability).
 
 ## Security Best Practices
 
@@ -696,7 +909,9 @@ The exported key will be stored at `/borg/config/repo-key.txt` (persisted to you
 
 | Scenario | What you need | How to recover |
 |----------|---------------|----------------|
-| **Restore single file** | Repository + passphrase | Use `/scripts/restore.sh extract` |
+| **Restore single file** | Repository + passphrase | `/scripts/restore.sh extract latest /restore <path>` |
+| **Find a file you cannot locate** | Repository + passphrase | `/scripts/restore.sh files latest <pattern>` |
+| **Browse before restoring** | Repository + passphrase + FUSE access | `/scripts/restore.sh mount latest /mnt/backup` |
 | **Client system failed** | Repository + passphrase | Install Borg on new machine, access repo with passphrase |
 | **Repository corrupted** | Repository + passphrase + **exported key** | `borg key import`, then access repository |
 | **Lost passphrase** | ❌ **Backups are permanently lost** | No recovery possible |
@@ -704,10 +919,12 @@ The exported key will be stored at `/borg/config/repo-key.txt` (persisted to you
 ### Best Practices
 
 1. ✅ Store passphrase separately from the system being backed up
-2. ✅ Export repository key and store securely (separate location)
-3. ✅ Test restore process at least once
-4. ✅ Keep SSH private key backed up separately
-5. ✅ Document your repository URL
+2. ✅ Export repository key and store securely (separate location) - `/scripts/restore.sh key-export`
+3. ✅ Enable scheduled restore drills (`RESTORE_DRILL_ENABLED=true`) so recoverability is proven continuously, not assumed
+4. ✅ Test a full recovery from a *different machine* at least once - the drill verifies the data, not your ability to rebuild the client
+5. ✅ Keep SSH private key backed up separately
+6. ✅ Document your repository URL
+7. ✅ Watch the startup preflight report for warnings after any config change
 
 **Apply 3-2-1 rule to your encryption credentials:**
 - **3** copies (container env var, password manager, printed/offline copy)
