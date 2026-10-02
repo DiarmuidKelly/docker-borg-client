@@ -5,7 +5,10 @@ FROM alpine:3
 # pin once a newer -rN appears (check: apk policy borgbackup).
 ARG BORG_VERSION=1.4.4-r1
 
-# Install Borg, SSH client, curl for notifications, jq for JSON parsing, websocat for WebSocket API calls, then create directories
+# Install Borg, SSH client and jq (used to parse borg --json-lines output).
+# curl and websocat were only needed by the TrueNAS notification transport,
+# which never worked (issue #33) and has been replaced by a persistent history
+# file, so they are no longer installed.
 # borgbackup-fuse provides the pyfuse3 bindings `borg mount` needs - without it
 # mount fails with "no FUSE support", which breaks the browse-the-archive
 # recovery path. Mounting also needs --device /dev/fuse --cap-add SYS_ADMIN.
@@ -14,9 +17,7 @@ RUN apk add --no-cache \
     borgbackup=${BORG_VERSION} \
     borgbackup-fuse=${BORG_VERSION} \
     openssh-client \
-    curl \
     jq \
-    websocat \
     tzdata && \
     mkdir -p /data /ssh /borg/cache /borg/config /scripts /restore
 

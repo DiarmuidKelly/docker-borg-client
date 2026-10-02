@@ -43,8 +43,10 @@ exit 0
 EOF
     chmod +x "$TEST_DIR/bin/borg"
 
-    # Drill state lives under /borg/config in the image; keep tests out of it
+    # Drill state and job history live under /borg/config in the image; keep
+    # tests out of it
     export RESTORE_DRILL_STATE_FILE="$TEST_DIR/last-drill"
+    export HISTORY_FILE="$TEST_DIR/history.log"
 }
 
 teardown() {
@@ -52,7 +54,7 @@ teardown() {
     unset BORG_REPO BORG_PASSPHRASE BORG_PASSPHRASE_FILE BORG_PASSCOMMAND
     unset BORG_RSH REPO_KEY_FILE PREFLIGHT_STRICT AUTO_INIT
     unset MOCK_REPO_FAIL MOCK_REPO_MSG MOCK_LAST_ARCHIVE
-    unset RESTORE_DRILL_STATE_FILE RESTORE_DRILL_MAX_AGE_DAYS
+    unset RESTORE_DRILL_STATE_FILE RESTORE_DRILL_MAX_AGE_DAYS HISTORY_FILE
     unset CRON_SCHEDULE VERIFY_ENABLED RESTORE_DRILL_ENABLED
 }
 
@@ -365,4 +367,67 @@ EOF
     run sh "$PREFLIGHT_SCRIPT"
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "Preflight: all checks passed"
+}
+
+# ---------- job history ----------
+# Container stdout is lost to log rotation and redeploys, so the persistent
+# history file is the only durable record of what each job did. Preflight reads
+# it back on every start.
+
+@test "reports the last run of each job from the history file" {
+    cat > "$HISTORY_FILE" <<'HIST'
+2026-10-01T01:03:11+0000 backup.success INFO Borg Backup Successful | Archive: backup-1, Duration: 206s
+2026-10-01T01:03:12+0000 prune.success INFO Borg Prune Successful | Retention: 7d/4w/6m
+2026-10-02T01:03:40+0000 backup.success INFO Borg Backup Successful | Archive: backup-2, Duration: 211s
+HIST
+
+    run sh "$PREFLIGHT_SCRIPT"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Last run of each job"
+    # The most recent backup entry wins
+    echo "$output" | grep -q "✓.*backup: backup.success at 2026-10-02T01:03:40"
+    echo "$output" | grep -q "✓.*prune: prune.success at 2026-10-01T01:03:12"
+    echo "$output" | grep -q "verify: no record yet"
+}
+
+@test "flags a failed job from the history file" {
+    cat > "$HISTORY_FILE" <<'HIST'
+2026-09-29T03:14:02+0000 verify.failure CRITICAL Borg Verification Failed | Level: archives, Exit code: 2
+HIST
+
+    run sh "$PREFLIGHT_SCRIPT"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "⚠.*verify: FAILED at 2026-09-29T03:14:02"
+    echo "$output" | grep -q "Level: archives, Exit code: 2"
+}
+
+# A verify that detected corruption matters even if a later run passed
+@test "surfaces failures still present in retained history" {
+    cat > "$HISTORY_FILE" <<'HIST'
+2026-09-29T03:14:02+0000 verify.failure CRITICAL Borg Verification Failed | Exit code: 2
+2026-10-01T03:14:02+0000 verify.success INFO Borg Verification Successful | Level: repository
+HIST
+
+    run sh "$PREFLIGHT_SCRIPT"
+    [ "$status" -eq 0 ]
+    # Latest state is a pass...
+    echo "$output" | grep -q "✓.*verify: verify.success"
+    # ...but the earlier failure is still called out
+    echo "$output" | grep -q "1 failure event(s) in retained history"
+}
+
+@test "reports when there is no history yet" {
+    run sh "$PREFLIGHT_SCRIPT"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "No job history yet"
+}
+
+@test "treats a restore drill failure as a job failure" {
+    cat > "$HISTORY_FILE" <<'HIST'
+2026-10-02T08:12:00+0000 restore.failure CRITICAL Borg Restore Drill Failed | 1 of 3 sampled files could not be restored
+HIST
+
+    run sh "$PREFLIGHT_SCRIPT"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "⚠.*restore: FAILED at 2026-10-02T08:12:00"
 }

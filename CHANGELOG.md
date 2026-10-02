@@ -15,6 +15,42 @@ user-visible changes to `[Unreleased]` as part of your PR.
 
 ## [Unreleased]
 
+### Added
+
+- **Persistent job history.** Every job records its outcome to
+  `/borg/config/history.log` on the persisted config volume, one event per line.
+  Cron output only ever went to the container's stdout, which is lost to log
+  rotation, a redeploy or an app update - so a failed backup, or a `borg check`
+  that detected corruption, could leave no trace anywhere. Capped at
+  `HISTORY_MAX_LINES` (500 by default, oldest dropped), which is roughly six
+  months of a daily backup plus weekly checks.
+- The startup preflight reads the history back and prints a status board showing
+  the last run of each job, flagging failures and counting any failure still
+  present in the retained history.
+
+### Removed
+
+- **The TrueNAS notification transport, and the `NOTIFY_TRUENAS_*` and
+  `NOTIFY_EVENTS` variables.** It never worked: `alert.oneshot_create` accepts
+  the call and returns an ID, but the alert never appears in the TrueNAS UI and
+  never triggers any notification service, because only predefined system alert
+  classes do (#33). Every event was silently discarded, including
+  `backup.failure` and `verify.failure`.
+
+  `scripts/notify.sh` keeps its exact call signature, so all existing call sites
+  are unchanged - it now appends to the history file instead of attempting a
+  WebSocket call. If you had `NOTIFY_TRUENAS_ENABLED=true` set, you can remove
+  it and the other `NOTIFY_*` variables; leaving them set is harmless, they are
+  simply ignored.
+
+  **This container does not push alerts anywhere.** It records what happened and
+  you have to look - which is what it did in practice before, minus the
+  misleading documentation. Push alerting remains open as #46 / #47.
+- `curl` and `websocat` are no longer installed in the image; they existed only
+  for the removed transport.
+- `docs/truenas-api-key-setup.md`, which documented setting up the API key for
+  notifications that could never arrive.
+
 ## [0.9.0] - 2026-10-02
 
 ### Added

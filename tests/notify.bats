@@ -1,264 +1,170 @@
 #!/usr/bin/env bats
 
-# Test notify.sh notification logic
+# Test notify.sh - records job events to a persistent history file.
+#
+# It previously pushed to the TrueNAS API, which silently discarded every
+# event (issue #33). The replacement must never fail the job that called it.
 
 setup() {
-    # Path to the script under test
     NOTIFY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/notify.sh"
+
+    TEST_DIR="/tmp/test-notify-$$"
+    mkdir -p "$TEST_DIR"
+
+    export HISTORY_FILE="$TEST_DIR/history.log"
 }
 
 teardown() {
-    # Clean up environment variables
-    unset NOTIFY_TRUENAS_ENABLED
-    unset NOTIFY_EVENTS
-    unset NOTIFY_TRUENAS_API_URL
-    unset NOTIFY_TRUENAS_API_KEY
-    unset NOTIFY_TRUENAS_VERIFY_SSL
+    rm -rf "$TEST_DIR"
+    unset HISTORY_FILE HISTORY_MAX_LINES
 }
 
-# Test: Script exits silently when notifications disabled
-@test "exits silently when NOTIFY_TRUENAS_ENABLED is not true" {
-    unset NOTIFY_TRUENAS_ENABLED
-    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Test Title" "Test Message"
+# ---------- recording ----------
+
+@test "records an event to the history file" {
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Borg Backup Successful" "Archive: backup-1, Duration: 206s"
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
+    echo "$output" | grep -q "Recorded: backup.success"
 
-    export NOTIFY_TRUENAS_ENABLED="false"
-    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Test Title" "Test Message"
+    [ -f "$HISTORY_FILE" ]
+    grep -q "backup.success INFO Borg Backup Successful | Archive: backup-1, Duration: 206s" "$HISTORY_FILE"
+}
+
+@test "records a timestamp in ISO 8601 form" {
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Title" "Message"
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
+    grep -qE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4} " "$HISTORY_FILE"
 }
 
-# Test: Requires EVENT_TYPE and EVENT_TITLE
-@test "fails when EVENT_TYPE is missing" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    run sh "$NOTIFY_SCRIPT"
-    [ "$status" -eq 1 ]
-    echo "$output" | grep -q "ERROR: notify.sh requires EVENT_TYPE and EVENT_TITLE"
+@test "appends rather than overwriting" {
+    sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "First" "one"
+    sh "$NOTIFY_SCRIPT" "prune.success" "INFO" "Second" "two"
+    sh "$NOTIFY_SCRIPT" "verify.failure" "CRITICAL" "Third" "three"
+
+    [ "$(wc -l < "$HISTORY_FILE")" -eq 3 ]
+    grep -q "First" "$HISTORY_FILE"
+    grep -q "Second" "$HISTORY_FILE"
+    grep -q "Third" "$HISTORY_FILE"
 }
 
-@test "fails when EVENT_TITLE is missing" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO"
-    [ "$status" -eq 1 ]
-    echo "$output" | grep -q "ERROR: notify.sh requires EVENT_TYPE and EVENT_TITLE"
-}
-
-# Test: Event filtering with NOTIFY_EVENTS not set (default to failures)
-@test "notifies on failures by default when NOTIFY_EVENTS not set" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    unset NOTIFY_EVENTS
-
-    # Create a mock websocat that fails (simulating no actual API)
-    cat > /tmp/mock-websocat-$$ << 'EOF'
-#!/bin/sh
-exit 1
-EOF
-    chmod +x /tmp/mock-websocat-$$
-    PATH="/tmp:$PATH"
-    ln -s /tmp/mock-websocat-$$ /tmp/websocat
-
-    # Should attempt to notify on failure
-    run sh "$NOTIFY_SCRIPT" "backup.failure" "CRITICAL" "Backup Failed" "Details"
-    [ "$status" -eq 0 ]  # Script exits 0 even if notification fails
-    echo "$output" | grep -q "TrueNAS notification failed"
-
-    # Should not attempt to notify on success
-    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Backup OK" "Details"
+@test "records failures as well as successes" {
+    run sh "$NOTIFY_SCRIPT" "verify.failure" "CRITICAL" "Borg Verification Failed" "Level: archives, Exit code: 2"
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
-
-    rm -f /tmp/websocat /tmp/mock-websocat-$$
+    grep -q "verify.failure CRITICAL Borg Verification Failed | Level: archives, Exit code: 2" "$HISTORY_FILE"
 }
 
-# Test: Event filtering with NOTIFY_EVENTS set
-@test "respects NOTIFY_EVENTS filter list" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    export NOTIFY_EVENTS="backup.start,backup.success,prune.failure"
-
-    # Create mock websocat
-    cat > /tmp/mock-websocat-$$ << 'EOF'
-#!/bin/sh
-exit 1
-EOF
-    chmod +x /tmp/mock-websocat-$$
-    PATH="/tmp:$PATH"
-    ln -s /tmp/mock-websocat-$$ /tmp/websocat
-
-    # Should notify on listed events
-    run sh "$NOTIFY_SCRIPT" "backup.start" "INFO" "Starting" "Details"
-    echo "$output" | grep -q "TrueNAS notification failed"  # Tries to notify
-
-    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Success" "Details"
-    echo "$output" | grep -q "TrueNAS notification failed"  # Tries to notify
-
-    run sh "$NOTIFY_SCRIPT" "prune.failure" "ERROR" "Failed" "Details"
-    echo "$output" | grep -q "TrueNAS notification failed"  # Tries to notify
-
-    # Should not notify on unlisted events
-    run sh "$NOTIFY_SCRIPT" "backup.failure" "ERROR" "Failed" "Details"
-    [ -z "$output" ]  # Doesn't try to notify
-
-    run sh "$NOTIFY_SCRIPT" "prune.success" "INFO" "Success" "Details"
-    [ -z "$output" ]  # Doesn't try to notify
-
-    rm -f /tmp/websocat /tmp/mock-websocat-$$
-}
-
-# Test: API URL and KEY validation
-@test "warns when API_URL is missing" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    unset NOTIFY_TRUENAS_API_URL
-    export NOTIFY_TRUENAS_API_KEY="test-key"
+# Every event is recorded deliberately: a history that omitted successes could
+# not answer "did the last backup work?"
+@test "records events regardless of NOTIFY_EVENTS" {
     export NOTIFY_EVENTS="backup.failure"
 
-    run sh "$NOTIFY_SCRIPT" "backup.failure" "ERROR" "Failed" "Details"
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Should still be recorded" "detail"
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "WARNING: TrueNAS notifications enabled but API_URL or API_KEY not set"
+    grep -q "Should still be recorded" "$HISTORY_FILE"
+    unset NOTIFY_EVENTS
 }
 
-@test "warns when API_KEY is missing" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    unset NOTIFY_TRUENAS_API_KEY
-    export NOTIFY_EVENTS="backup.failure"
-
-    run sh "$NOTIFY_SCRIPT" "backup.failure" "ERROR" "Failed" "Details"
+@test "records events without requiring any TrueNAS configuration" {
+    # The old transport exited early unless NOTIFY_TRUENAS_ENABLED=true
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "No config needed" "detail"
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "WARNING: TrueNAS notifications enabled but API_URL or API_KEY not set"
+    grep -q "No config needed" "$HISTORY_FILE"
 }
 
-# Test: URL formatting for WebSocket endpoint
-@test "formats WebSocket URL correctly" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local/"  # With trailing slash
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    export NOTIFY_EVENTS="test.event"
-
-    # Mock websocat to capture the URL it receives
-    cat > /tmp/mock-websocat-$$ << 'EOF'
-#!/bin/sh
-echo "MOCK_URL: $2"
-exit 1
-EOF
-    chmod +x /tmp/mock-websocat-$$
-    PATH="/tmp:$PATH"
-    ln -s /tmp/mock-websocat-$$ /tmp/websocat
-
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" "Test" "Message"
-    echo "$output" | grep -q "MOCK_URL: http://test.local/api/current"
-
-    # Test without trailing slash
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" "Test" "Message"
-    echo "$output" | grep -q "MOCK_URL: http://test.local/api/current"
-
-    rm -f /tmp/websocat /tmp/mock-websocat-$$
-}
-
-# Test: SSL verification flag
-@test "uses --insecure flag when VERIFY_SSL is false" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="https://test.local"
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    export NOTIFY_TRUENAS_VERIFY_SSL="false"
-    export NOTIFY_EVENTS="test.event"
-
-    # Mock websocat to capture flags
-    cat > /tmp/mock-websocat-$$ << 'EOF'
-#!/bin/sh
-for arg in "$@"; do
-    if [ "$arg" = "--insecure" ]; then
-        echo "INSECURE_FLAG_FOUND"
-    fi
-done
-exit 1
-EOF
-    chmod +x /tmp/mock-websocat-$$
-    PATH="/tmp:$PATH"
-    ln -s /tmp/mock-websocat-$$ /tmp/websocat
-
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" "Test" "Message"
-    echo "$output" | grep -q "INSECURE_FLAG_FOUND"
-
-    # Test without insecure flag
-    export NOTIFY_TRUENAS_VERIFY_SSL="true"
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" "Test" "Message"
-    echo "$output" | grep -qv "INSECURE_FLAG_FOUND" || true
-
-    rm -f /tmp/websocat /tmp/mock-websocat-$$
-}
-
-# Test: JSON escaping
-@test "escapes JSON special characters in title and message" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    export NOTIFY_EVENTS="test.event"
-
-    # Mock websocat to capture the JSON
-    cat > /tmp/mock-websocat-$$ << 'EOF'
-#!/bin/sh
-cat  # Echo stdin to stdout
-exit 1
-EOF
-    chmod +x /tmp/mock-websocat-$$
-    PATH="/tmp:$PATH"
-    ln -s /tmp/mock-websocat-$$ /tmp/websocat
-
-    # Test with quotes and newlines
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" 'Title with "quotes"' 'Message with
-newline'
-
-    # Should have escaped quotes
-    echo "$output" | grep -q 'Title with \\"quotes\\"'
-    # Note: The actual newline handling may vary
-
-    rm -f /tmp/websocat /tmp/mock-websocat-$$
-}
-
-# Test: Event levels
-@test "passes correct event levels" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    export NOTIFY_EVENTS="test.event"
-
-    # Mock websocat to capture the JSON
-    cat > /tmp/mock-websocat-$$ << 'EOF'
-#!/bin/sh
-cat
-exit 1
-EOF
-    chmod +x /tmp/mock-websocat-$$
-    PATH="/tmp:$PATH"
-    ln -s /tmp/mock-websocat-$$ /tmp/websocat
-
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" "Test" "Message"
-    echo "$output" | grep -q '"level":"INFO"'
-
-    run sh "$NOTIFY_SCRIPT" "test.event" "WARNING" "Test" "Message"
-    echo "$output" | grep -q '"level":"WARNING"'
-
-    run sh "$NOTIFY_SCRIPT" "test.event" "CRITICAL" "Test" "Message"
-    echo "$output" | grep -q '"level":"CRITICAL"'
-
-    rm -f /tmp/websocat /tmp/mock-websocat-$$
-}
-
-# Test: Always exits 0 (doesn't break backups)
-@test "always exits with status 0 even on notification failure" {
-    export NOTIFY_TRUENAS_ENABLED="true"
-    export NOTIFY_TRUENAS_API_URL="http://test.local"
-    export NOTIFY_TRUENAS_API_KEY="test-key"
-    export NOTIFY_EVENTS="test.event"
-
-    # No websocat available - should fail but exit 0
-    PATH="/nonexistent:$PATH"
-    run sh "$NOTIFY_SCRIPT" "test.event" "INFO" "Test" "Message"
+@test "keeps a multi-line message on one line" {
+    run sh "$NOTIFY_SCRIPT" "backup.failure" "CRITICAL" "Failed" "line one
+line two"
     [ "$status" -eq 0 ]
+    [ "$(wc -l < "$HISTORY_FILE")" -eq 1 ]
+    grep -q "line one line two" "$HISTORY_FILE"
+}
+
+@test "creates the history directory if it does not exist" {
+    export HISTORY_FILE="$TEST_DIR/nested/deeper/history.log"
+
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Title" "Message"
+    [ "$status" -eq 0 ]
+    [ -f "$HISTORY_FILE" ]
+}
+
+# ---------- rolling cap ----------
+
+@test "caps the history at HISTORY_MAX_LINES, dropping the oldest" {
+    export HISTORY_MAX_LINES=5
+
+    i=1
+    while [ $i -le 8 ]; do
+        sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "event-$i" "detail"
+        i=$((i + 1))
+    done
+
+    [ "$(wc -l < "$HISTORY_FILE")" -eq 5 ]
+    # Oldest dropped, newest kept
+    ! grep -q "event-1 " "$HISTORY_FILE"
+    ! grep -q "event-3 " "$HISTORY_FILE"
+    grep -q "event-4 " "$HISTORY_FILE"
+    grep -q "event-8 " "$HISTORY_FILE"
+}
+
+@test "leaves the history alone when under the cap" {
+    export HISTORY_MAX_LINES=100
+
+    sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "first" "detail"
+    sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "second" "detail"
+
+    [ "$(wc -l < "$HISTORY_FILE")" -eq 2 ]
+    grep -q "first" "$HISTORY_FILE"
+}
+
+@test "does not leave a temporary file behind after trimming" {
+    export HISTORY_MAX_LINES=2
+
+    i=1
+    while [ $i -le 5 ]; do
+        sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "event-$i" "detail"
+        i=$((i + 1))
+    done
+
+    [ ! -f "${HISTORY_FILE}.tmp" ]
+}
+
+# ---------- must never break the calling job ----------
+
+@test "exits 0 when the history file cannot be written" {
+    # A path that cannot be created
+    export HISTORY_FILE="/proc/cannot/write/here/history.log"
+
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Title" "Message"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "WARNING: cannot"
+}
+
+@test "exits 0 when the history file is not writable" {
+    printf 'existing\n' > "$HISTORY_FILE"
+    chmod 444 "$HISTORY_FILE"
+
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "Title" "Message"
+    [ "$status" -eq 0 ]
+
+    chmod 644 "$HISTORY_FILE"
+}
+
+# ---------- argument validation ----------
+
+@test "requires an event type" {
+    run sh "$NOTIFY_SCRIPT" "" "INFO" "Title" "Message"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "requires EVENT_TYPE and EVENT_TITLE"
+}
+
+@test "requires a title" {
+    run sh "$NOTIFY_SCRIPT" "backup.success" "INFO" "" "Message"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "requires EVENT_TYPE and EVENT_TITLE"
+}
+
+@test "accepts an empty message" {
+    run sh "$NOTIFY_SCRIPT" "container.startup" "INFO" "Container Started"
+    [ "$status" -eq 0 ]
+    grep -q "container.startup INFO Container Started" "$HISTORY_FILE"
 }
