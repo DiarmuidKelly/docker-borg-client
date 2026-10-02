@@ -80,19 +80,15 @@ borg create \
 
 BORG_PID=$!
 
-# Give borg a moment to start (needs time to initialize Python + SSH connection)
-sleep 2
-
-# Verify the process exists (borg runs via python, so we check PID exists, not name)
-if ! kill -0 $BORG_PID 2>/dev/null; then
-    echo "ERROR: Failed to start borg or capture PID"
-    wait $BORG_PID 2>/dev/null || exit 1
-    exit $?
-fi
-
 echo "Borg process started (PID: $BORG_PID)"
 
-# Spawn window monitor with verified borg PID
+# Spawn the window monitor only when it has work to do. Previously the script
+# slept 2s and used `kill -0` to confirm borg had started, but a backup that
+# finished in under 2s looked identical to one that never started - the error
+# branch exited 0 and silently skipped prune and the success notification
+# (issue #56). `wait` below is the authoritative source of borg's exit code, so
+# no liveness probe is needed: a backup that has already finished has nothing
+# to monitor, and the monitor exits on its own once the PID disappears.
 MONITOR_PID=""
 if [ "${BACKUP_RATE_LIMIT_OUT_WINDOW:-}" = "0" ]; then
     /scripts/window-monitor.sh $BORG_PID &
@@ -100,9 +96,12 @@ if [ "${BACKUP_RATE_LIMIT_OUT_WINDOW:-}" = "0" ]; then
     echo "Window monitor started (PID: $MONITOR_PID)"
 fi
 
-# Wait for borg to complete
+# Wait for borg to complete. `set -e` would abort the script on a non-zero
+# exit before the error handling below could run, so guard the wait.
+set +e
 wait $BORG_PID
 EXIT_CODE=$?
+set -e
 
 # Wait for monitor to exit (it exits automatically when borg exits)
 if [ -n "$MONITOR_PID" ]; then

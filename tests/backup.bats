@@ -72,7 +72,6 @@ teardown() {
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 echo "BORG: create $@"
-sleep 2.1  # Just enough for backup.sh PID check (needs >2 seconds)
 exit 0
 EOF
     chmod +x "$TEST_DIR/bin/borg"
@@ -90,18 +89,12 @@ EOF
 }
 
 # Test: Backup failure handling
-# FIXME: This test is skipped due to a bug in backup.sh where set -e causes
-# the script to exit immediately when wait returns non-zero, preventing
-# the error handling code from running. This should be fixed in backup.sh.
+# Previously skipped: `set -e` aborted the script when `wait` returned
+# non-zero, so the error handling never ran. The wait is now guarded.
 @test "handles backup failure correctly" {
-    skip "Skipped: backup.sh exits early due to set -e when wait returns non-zero"
-    # Create mock borg that fails after simulating some work
-    # Need to keep process alive for at least 2 seconds for PID check
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 echo "BORG ERROR: Repository not found" >&2
-# Sleep long enough for backup.sh to get past the PID check
-sleep 2.5
 exit 2
 EOF
     chmod +x "$TEST_DIR/bin/borg"
@@ -114,7 +107,31 @@ EOF
     echo "$output" | grep -q "ERROR: Backup failed!"
     echo "$output" | grep -q "Exit code: 2"
     echo "$output" | grep -q "NOTIFY: backup.failure CRITICAL"
-    echo "$output" | grep -qv "PRUNE: Running prune"  # Should not run prune on failure
+    # Prune must not run on failure
+    ! echo "$output" | grep -q "PRUNE: Running prune"
+}
+
+# Test: issue #56 - a backup that finishes in under 2 seconds must still prune
+# and notify. The old code slept 2s then used `kill -0` to decide whether borg
+# had started; a fast backup looked identical to one that never started, so the
+# script exited 0 early and silently skipped both steps.
+@test "fast backup still runs prune and sends success notification (issue #56)" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG: create $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$BACKUP_SCRIPT" > "$TEST_DIR/backup-test.sh"
+
+    run sh "$TEST_DIR/backup-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "Backup completed successfully!"
+    echo "$output" | grep -q "NOTIFY: backup.success INFO"
+    echo "$output" | grep -q "PRUNE: Running prune"
+    # The misleading error from the old PID probe must be gone
+    ! echo "$output" | grep -q "Failed to start borg or capture PID"
 }
 
 # Test: Rate limiting inside window
@@ -221,12 +238,9 @@ EOF
 # the script to exit immediately when wait returns non-zero (including 143),
 # preventing the SIGTERM handling code from running. This should be fixed in backup.sh.
 @test "handles SIGTERM (exit 143) as window termination" {
-    skip "Skipped: backup.sh exits early due to set -e when wait returns 143"
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 echo "BORG: Terminated by signal" >&2
-# Sleep long enough for backup.sh to get past the PID check
-sleep 2.5
 exit 143
 EOF
     chmod +x "$TEST_DIR/bin/borg"
@@ -237,8 +251,8 @@ EOF
     [ "$status" -eq 0 ]  # Should exit 0, not 143
     echo "$output" | grep -q "INFO: Backup terminated by window monitor"
     echo "$output" | grep -q "Will resume from checkpoint in next window"
-    echo "$output" | grep -qv "ERROR: Backup failed!"
-    echo "$output" | grep -qv "NOTIFY: backup.failure"
+    ! echo "$output" | grep -q "ERROR: Backup failed!"
+    ! echo "$output" | grep -q "NOTIFY: backup.failure"
 }
 
 # Test: Window monitor spawning
