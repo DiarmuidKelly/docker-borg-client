@@ -15,6 +15,8 @@ user-visible changes to `[Unreleased]` as part of your PR.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-05
+
 ### Fixed
 
 - **Scheduled verification killed running backups.** `verify.sh` ran
@@ -325,7 +327,8 @@ Entries for 0.5.0 and earlier are not reconstructed here; see the
 [release history](https://github.com/DiarmuidKelly/docker-borg-client/releases)
 and `git log`.
 
-[Unreleased]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/DiarmuidKelly/docker-borg-client/compare/v0.7.0...v0.8.0
