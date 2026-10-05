@@ -36,9 +36,7 @@ teardown() {
     # Create mock borg that succeeds
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "BORG_CHECK: $@"
     exit 0
 fi
@@ -65,9 +63,7 @@ EOF
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "BORG_CHECK: $@"
     exit 0
 fi
@@ -90,9 +86,7 @@ EOF
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "BORG_CHECK: $@"
     exit 0
 fi
@@ -116,9 +110,6 @@ EOF
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-fi
 exit 1
 EOF
     chmod +x "$TEST_DIR/bin/borg"
@@ -135,9 +126,7 @@ EOF
 @test "verification failure sends verify.failure notification" {
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "ERROR: Repository corruption detected"
     exit 2
 fi
@@ -160,9 +149,7 @@ EOF
 
         cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "BORG_CHECK: $@"
     exit 0
 fi
@@ -184,10 +171,7 @@ EOF
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    echo "BREAK_LOCK_REPO: $2"
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     # Last argument should be repository
     for arg in "$@"; do
         last_arg="$arg"
@@ -203,7 +187,6 @@ EOF
 
     run sh "$TEST_DIR/verify-test.sh"
     [ "$status" -eq 0 ]
-    echo "$output" | grep -q "BREAK_LOCK_REPO: /custom/repo/path"
     echo "$output" | grep -q "CHECK_REPO: /custom/repo/path"
 }
 
@@ -211,9 +194,7 @@ EOF
 @test "duration included in notification" {
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     sleep 1
     exit 0
 fi
@@ -231,16 +212,19 @@ EOF
     echo "$output" | grep -q "Duration:.*s"
 }
 
-# Test: Lock is broken before verification
-@test "breaks lock before running verification" {
+# Test: The lock is never broken (issue #59)
+#
+# This script used to run `borg break-lock` unconditionally, which deleted the
+# repository and cache locks out from under a running backup; the backup then
+# died at its next checkpoint with "bug in code, exclusive lock should exist
+# here". No borg subcommand other than check may ever be invoked here.
+@test "never breaks the repository lock" {
     export BORG_COMMANDS_FILE="$TEST_DIR/borg-commands.log"
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
 echo "$1" >> "$BORG_COMMANDS_FILE"
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     exit 0
 fi
 exit 1
@@ -252,10 +236,133 @@ EOF
     run sh "$TEST_DIR/verify-test.sh"
     [ "$status" -eq 0 ]
 
-    # Verify break-lock was called first
-    head -1 "$BORG_COMMANDS_FILE" | grep -q "break-lock"
-    # Verify check was called second
-    tail -1 "$BORG_COMMANDS_FILE" | grep -q "check"
+    ! grep -q "break-lock" "$BORG_COMMANDS_FILE"
+    grep -q "check" "$BORG_COMMANDS_FILE"
+    # check is the only borg subcommand invoked
+    [ "$(sort -u "$BORG_COMMANDS_FILE" | wc -l)" -eq 1 ]
+}
+
+# Test: A locked repository is a skip, not a failure
+@test "skips rather than failing when the repository is locked" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "check" ]; then
+    echo "Failed to create/acquire the lock /repo/lock.exclusive (timeout)." >&2
+    exit 2
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    # Nothing was checked, but nothing is known to be wrong either
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "SKIPPED: repository is locked"
+    echo "$output" | grep -q "does not break locks"
+    ! echo "$output" | grep -q "Verification completed successfully"
+    ! echo "$output" | grep -q "NOTIFY: verify.failure"
+}
+
+# Test: A skip is recorded, so a check that never runs stays visible
+@test "records verify.skipped when the repository is locked" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "check" ]; then
+    echo "Lock.exclusive is held by PID 1234 on host abc." >&2
+    exit 2
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "NOTIFY: verify.skipped WARNING"
+}
+
+# Test: A real corruption failure is not mistaken for a lock skip
+@test "corruption failure is still a failure" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "check" ]; then
+    echo "Index object count mismatch. Finished full repository check, errors found." >&2
+    exit 2
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "Verification failed"
+    echo "$output" | grep -q "NOTIFY: verify.failure CRITICAL"
+    ! echo "$output" | grep -q "SKIPPED"
+}
+
+# Test: Default lock wait is passed to borg check
+@test "passes default lock wait to borg check" {
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "check" ]; then
+    echo "BORG_CHECK: $@"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "BORG_CHECK:.*--lock-wait 300"
+    echo "$output" | grep -q "Lock wait: 300s"
+}
+
+# Test: VERIFY_LOCK_WAIT overrides the default
+@test "VERIFY_LOCK_WAIT overrides the default lock wait" {
+    export VERIFY_LOCK_WAIT="30"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+if [ "$1" = "check" ]; then
+    echo "BORG_CHECK: $@"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "BORG_CHECK:.*--lock-wait 30"
+}
+
+# Test: A non-numeric lock wait is a configuration error, not a borg error
+@test "non-numeric VERIFY_LOCK_WAIT exits with a configuration error" {
+    export VERIFY_LOCK_WAIT="forever"
+
+    cat > "$TEST_DIR/bin/borg" << 'EOF'
+#!/bin/sh
+echo "BORG_CALLED: $@"
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/borg"
+
+    sed "s|/scripts/|$TEST_DIR/scripts/|g" "$VERIFY_SCRIPT" > "$TEST_DIR/verify-test.sh"
+
+    run sh "$TEST_DIR/verify-test.sh"
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "VERIFY_LOCK_WAIT must be a non-negative integer"
+    ! echo "$output" | grep -q "BORG_CALLED"
 }
 
 # Test: Repository check skipped on archives day
@@ -295,9 +402,7 @@ EOF
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "BORG_CHECK: $@"
     exit 0
 fi
@@ -322,9 +427,7 @@ EOF
 
     cat > "$TEST_DIR/bin/borg" << 'EOF'
 #!/bin/sh
-if [ "$1" = "break-lock" ]; then
-    exit 0
-elif [ "$1" = "check" ]; then
+if [ "$1" = "check" ]; then
     echo "BORG_CHECK: $@"
     exit 0
 fi

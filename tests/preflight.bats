@@ -401,6 +401,23 @@ HIST
     echo "$output" | grep -q "Level: archives, Exit code: 2"
 }
 
+# A skipped check did not fail, but it did not run either - so it must not read
+# as a tick. A verify that skips every week is a verify that is not happening.
+@test "flags a skipped job rather than showing it as a pass" {
+    cat > "$HISTORY_FILE" <<'HIST'
+2026-10-05T03:05:02+0000 verify.skipped WARNING Borg Verification Skipped | Level: repository, repository locked after 300s wait
+HIST
+
+    run sh "$PREFLIGHT_SCRIPT"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "⚠.*verify: SKIPPED at 2026-10-05T03:05:02.*did not run"
+    echo "$output" | grep -q "repository locked after 300s wait"
+    echo "$output" | grep -q "move the schedule clear of the backup window"
+    ! echo "$output" | grep -q "✓.*verify"
+    # A skip is not a failure event
+    ! echo "$output" | grep -q "failure event(s) in retained history"
+}
+
 # A verify that detected corruption matters even if a later run passed
 @test "surfaces failures still present in retained history" {
     cat > "$HISTORY_FILE" <<'HIST'
