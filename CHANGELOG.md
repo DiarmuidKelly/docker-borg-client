@@ -15,6 +15,50 @@ user-visible changes to `[Unreleased]` as part of your PR.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scheduled verification killed running backups.** `verify.sh` ran
+  `borg break-lock` unconditionally before every check, on the reasoning that
+  "verify takes priority". It does not: `break-lock` deletes the repository lock
+  *and* the local cache lock, so a backup already in progress lost both and then
+  died at its next checkpoint with `AssertionError: bug in code, exclusive lock
+  should exist here`, followed by `NotLocked` on the cache it no longer owned.
+  The backup exited 74 and the half-written archive was left for the next run to
+  resume.
+
+  This was not an edge case. Any backup that is still running when a check fires
+  hit it, every time - a nightly backup at 01:00 that takes two hours and a
+  weekly repository check at 03:00 collided every single week.
+
+  A check now never interrupts a backup. It waits `VERIFY_LOCK_WAIT` seconds
+  (300 by default) for the repository lock, and if it cannot get it, skips with a
+  `verify.skipped` entry in the job history and runs on the next schedule. It
+  never breaks the lock. Stale locks left by a container that died mid-backup are
+  still cleared at startup by `entrypoint.sh`, which is the only place that can
+  know the holder is really gone.
+
+  Skips are deliberately visible rather than silent, because a check that keeps
+  skipping is a check that is not happening: the startup preflight now reports a
+  skipped job as a warning (`⚠ verify: SKIPPED at ... - did not run`) instead of
+  a tick.
+
+  A failure to acquire the lock is no longer reported as `verify.failure` - it is
+  not a verification failure, because nothing was checked and nothing is known to
+  be wrong. Repository corruption is still `verify.failure` with borg's exit
+  code, unchanged.
+
+### Changed
+
+- **New `VERIFY_LOCK_WAIT`** (default `300`), the seconds a check waits for the
+  repository lock before skipping. Nothing needs setting; the default covers a
+  backup that is nearly done.
+
+  **Check your verification schedules.** If `VERIFY_REPO_CRON_SCHEDULE` or
+  `VERIFY_ARCHIVES_CRON_SCHEDULE` fires while your backup is typically still
+  running, that check used to run (and break the backup) and will now skip
+  instead. Move it clear of the backup window - the README examples now use
+  06:00 rather than 03:00 for this reason.
+
 ## [0.9.1] - 2026-10-02
 
 ### Fixed

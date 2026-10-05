@@ -221,6 +221,15 @@ if [ -f "$HISTORY_FILE" ]; then
                 warn "${job}: FAILED at ${when}"
                 [ -n "$detail" ] && echo "     $detail"
                 ;;
+            *.skipped)
+                # Not a failure, but nothing ran either - so it must not read as
+                # a tick. A check that skips every week is a check that is not
+                # happening.
+                warn "${job}: SKIPPED at ${when} - did not run"
+                [ -n "$detail" ] && echo "     $detail"
+                echo "     A locked repository (a backup still running) causes a skip."
+                echo "     If this repeats, move the schedule clear of the backup window."
+                ;;
             *)
                 ok "${job}: ${event} at ${when}"
                 ;;

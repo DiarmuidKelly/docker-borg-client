@@ -256,6 +256,7 @@ If prompted for password, SSH key is not configured correctly on remote server.
 | `VERIFY_REPO_CRON_SCHEDULE` | No | - | Repository check schedule (e.g., `0 3 * * 0` for weekly Sunday 03:00) |
 | `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | - | Archives check schedule (e.g., `0 3 1 * *` for monthly 1st at 03:00) |
 | `VERIFY_LEVEL` | No | `repository` | Manual verification depth: `repository`, `archives`, or `full` |
+| `VERIFY_LOCK_WAIT` | No | `300` | Seconds a check waits for the repository lock before skipping (it never breaks the lock) |
 | `PREFLIGHT_ENABLED` | No | `true` | Run the startup recovery-readiness report |
 | `PREFLIGHT_STRICT` | No | `false` | Refuse to start if preflight finds a problem (e.g. a wrong passphrase) |
 
@@ -361,6 +362,7 @@ Scheduled `borg check` verification ensures your backup repository remains healt
 | `VERIFY_ENABLED` | No | `false` | Enable scheduled verification |
 | `VERIFY_REPO_CRON_SCHEDULE` | No | - | Repository check schedule (e.g., `0 3 * * 0` for weekly) |
 | `VERIFY_ARCHIVES_CRON_SCHEDULE` | No | - | Archives check schedule (e.g., `0 3 1 * *` for monthly) |
+| `VERIFY_LOCK_WAIT` | No | `300` | Seconds to wait for the repository lock before skipping the check |
 
 **Verification Levels:**
 
@@ -373,12 +375,19 @@ Scheduled `borg check` verification ensures your backup repository remains healt
 **Example Configuration:**
 ```bash
 VERIFY_ENABLED=true
-VERIFY_REPO_CRON_SCHEDULE=0 3 * * 0      # Weekly Sunday 3am
-VERIFY_ARCHIVES_CRON_SCHEDULE=0 3 1 * *  # Monthly 1st at 3am
+VERIFY_REPO_CRON_SCHEDULE=0 6 * * 0      # Weekly Sunday 6am
+VERIFY_ARCHIVES_CRON_SCHEDULE=0 6 1 * *  # Monthly 1st at 6am
 ```
 
+**Leave room after your backup.** A check needs the repository lock, and a
+running backup holds it, so a check that fires while the backup is still going
+waits `VERIFY_LOCK_WAIT` seconds and then skips. With a nightly backup at 01:00
+that takes two hours, a check at 03:00 skips every week; 06:00 leaves headroom
+for the backup to grow.
+
 **Behaviour Notes:**
-- Verification breaks any existing borg lock before running - if a backup is in progress, it will be interrupted and resume from checkpoint on next scheduled run
+- A check never interrupts a running backup. It waits up to `VERIFY_LOCK_WAIT` seconds (300 by default) for the repository lock, then skips with a `verify.skipped` entry in the job history and runs on the next schedule. It does **not** break the lock
+- A skipped check is reported on every container start by the startup preflight, so a check that keeps skipping does not go unnoticed
 - Verification is read-only and does not respect backup windows (no bandwidth impact)
 - `full` level reads all repository data and is very slow on large repos - use for manual spot-checks only
 - **No double-runs**: If the archives day falls on a repo day (e.g., 1st is a Sunday), only the archives check runs - the repository check is automatically skipped
@@ -812,7 +821,14 @@ docker compose run --rm borg-backup ssh -i /ssh/key user@host
 
 ### Repository Lock
 
-If backup fails due to lock:
+A lock usually means another borg job holds the repository. **Check that nothing
+is running before breaking it** - breaking the lock under a live backup kills it
+at its next checkpoint with `bug in code, exclusive lock should exist here`, and
+leaves the local cache lock inconsistent too.
+
+Stale locks from a container that died mid-backup are cleared automatically on
+the next container start. If you need to break one by hand:
+
 ```bash
 docker compose run --rm borg-backup borg break-lock $BORG_REPO
 ```
